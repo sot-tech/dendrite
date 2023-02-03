@@ -31,6 +31,7 @@ import (
 	appserviceAPI "github.com/matrix-org/dendrite/appservice/api"
 	"github.com/matrix-org/dendrite/clientapi/api"
 	"github.com/matrix-org/dendrite/clientapi/auth"
+	"github.com/matrix-org/dendrite/clientapi/auth/sso"
 	clientutil "github.com/matrix-org/dendrite/clientapi/httputil"
 	"github.com/matrix-org/dendrite/clientapi/jsonerror"
 	"github.com/matrix-org/dendrite/clientapi/producers"
@@ -76,6 +77,15 @@ func Setup(
 
 	rateLimits := httputil.NewRateLimits(&cfg.RateLimiting)
 	userInteractiveAuth := auth.NewUserInteractive(userAPI, cfg)
+
+	var ssoAuthenticator *sso.Authenticator
+	if cfg.Login.SSO.Enabled {
+		var err error
+		ssoAuthenticator, err = sso.NewAuthenticator(&cfg.Login.SSO)
+		if err != nil {
+			logrus.WithError(err).Fatal("failed to create SSO authenticator")
+		}
+	}
 
 	unstableFeatures := map[string]bool{
 		"org.matrix.e2e_cross_signing": true,
@@ -207,9 +217,9 @@ func Setup(
 			httputil.MakeAuthAPI("send_server_notice", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 				notificationSenderOnce.Do(func() {
 					serverNotificationSender, err = getSenderDevice(context.Background(), rsAPI, userAPI, cfg)
-					if err != nil {
-						logrus.WithError(err).Fatal("unable to get account for sending sending server notices")
-					}
+				if err != nil {
+					logrus.WithError(err).Fatal("unable to get account for sending sending server notices")
+				}
 				})
 				// not specced, but ensure we're rate limiting requests to this endpoint
 				if r := rateLimits.Limit(req, device); r != nil {
@@ -656,6 +666,25 @@ func Setup(
 			return Login(req, userAPI, cfg)
 		}),
 	).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+
+	v3mux.Handle("/login/sso/callback",
+		httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
+			return SSOCallback(req, userAPI, ssoAuthenticator, &cfg.Login.SSO, cfg.Matrix.ServerName)
+		}),
+	).Methods(http.MethodGet, http.MethodOptions)
+
+	v3mux.Handle("/login/sso/redirect",
+		httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
+			return SSORedirect(req, "", ssoAuthenticator, &cfg.Login.SSO)
+		}),
+	).Methods(http.MethodGet, http.MethodOptions)
+
+	v3mux.Handle("/login/sso/redirect/{idpID}",
+		httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
+			vars := mux.Vars(req)
+			return SSORedirect(req, vars["idpID"], ssoAuthenticator, &cfg.Login.SSO)
+		}),
+	).Methods(http.MethodGet, http.MethodOptions)
 
 	v3mux.Handle("/auth/{authType}/fallback/web",
 		httputil.MakeHTMLAPI("auth_fallback", base.EnableMetrics, func(w http.ResponseWriter, req *http.Request) {
@@ -1404,7 +1433,7 @@ func Setup(
 	v3mux.Handle("/keys/claim",
 		httputil.MakeAuthAPI("keys_claim", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 			return ClaimKeys(req, keyAPI)
-		}, httputil.WithAllowGuests()),
+		}),
 	).Methods(http.MethodPost, http.MethodOptions)
 	v3mux.Handle("/rooms/{roomId}/receipt/{receiptType}/{eventId}",
 		httputil.MakeAuthAPI(gomatrixserverlib.Join, userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
