@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/matrix-org/gomatrixserverlib"
@@ -14,31 +13,12 @@ import (
 )
 
 func main() {
-	cfg, err := buildConfig(flag.CommandLine, os.Args[1:])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	bs, err := yaml.Marshal(cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println(string(bs))
-}
-
-func buildConfig(fs *flag.FlagSet, args []string) (*config.Dendrite, error) {
-	defaultsForCI := fs.Bool("ci", false, "Populate the configuration with sane defaults for use in CI")
-	serverName := fs.String("server", "", "The domain name of the server if not 'localhost'")
-	dbURI := fs.String("db", "", "The DB URI to use for all components (PostgreSQL only)")
-	dirPath := fs.String("dir", "./", "The folder to use for paths (like SQLite databases, media storage)")
-	normalise := fs.String("normalise", "", "Normalise an existing configuration file by adding new/missing options and defaults")
-	polylith := fs.Bool("polylith", false, "Generate a config that makes sense for polylith deployments")
-
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
+	defaultsForCI := flag.Bool("ci", false, "Populate the configuration with sane defaults for use in CI")
+	serverName := flag.String("server", "", "The domain name of the server if not 'localhost'")
+	dbURI := flag.String("db", "", "The DB URI to use for all components (PostgreSQL only)")
+	dirPath := flag.String("dir", "./", "The folder to use for paths (like SQLite databases, media storage)")
+	normalise := flag.String("normalise", "", "Normalise an existing configuration file by adding new/missing options and defaults")
+	flag.Parse()
 
 	var cfg *config.Dendrite
 	if *normalise == "" {
@@ -47,13 +27,13 @@ func buildConfig(fs *flag.FlagSet, args []string) (*config.Dendrite, error) {
 		}
 		cfg.Defaults(config.DefaultOpts{
 			Generate:   true,
-			Monolithic: !*polylith,
+			SingleDatabase: true,
 		})
 		if *serverName != "" {
 			cfg.Global.ServerName = gomatrixserverlib.ServerName(*serverName)
 		}
 		uri := config.DataSource(*dbURI)
-		if *polylith || uri.IsSQLite() || uri == "" {
+		if uri.IsSQLite() || uri == "" {
 			for name, db := range map[string]*config.DatabaseOptions{
 				"federationapi": &cfg.FederationAPI.Database,
 				"keyserver":     &cfg.KeyServer.Database,
@@ -62,6 +42,7 @@ func buildConfig(fs *flag.FlagSet, args []string) (*config.Dendrite, error) {
 				"roomserver":    &cfg.RoomServer.Database,
 				"syncapi":       &cfg.SyncAPI.Database,
 				"userapi":       &cfg.UserAPI.AccountDatabase,
+				"relayapi":      &cfg.RelayAPI.Database,
 			} {
 				if uri == "" {
 					path := filepath.Join(*dirPath, fmt.Sprintf("dendrite_%s.db", name))
@@ -119,9 +100,6 @@ func buildConfig(fs *flag.FlagSet, args []string) (*config.Dendrite, error) {
 			cfg.UserAPI.BCryptCost = bcrypt.MinCost
 			cfg.Global.JetStream.InMemory = true
 			cfg.Global.JetStream.StoragePath = config.Path(*dirPath)
-			if *polylith {
-				cfg.Global.JetStream.Addresses = []string{"localhost"}
-			}
 			cfg.ClientAPI.RegistrationDisabled = false
 			cfg.ClientAPI.OpenRegistrationWithoutVerificationEnabled = true
 			cfg.ClientAPI.RegistrationSharedSecret = "complement"
@@ -138,10 +116,15 @@ func buildConfig(fs *flag.FlagSet, args []string) (*config.Dendrite, error) {
 		}
 	} else {
 		var err error
-		if cfg, err = config.Load(*normalise, !*polylith); err != nil {
-			return nil, err
+		if cfg, err = config.Load(*normalise); err != nil {
+			panic(err)
 		}
 	}
 
-	return cfg, nil
+	j, err := yaml.Marshal(cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(string(j))
 }

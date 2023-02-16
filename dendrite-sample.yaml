@@ -38,7 +38,7 @@ global:
 
   # Global database connection pool, for PostgreSQL monolith deployments only. If
   # this section is populated then you can omit the "database" blocks in all other
-  # sections. For polylith deployments, or monolith deployments using SQLite databases,
+  # sections. For monolith deployments using SQLite databases,
   # you must configure the "database" block for each component instead.
   database:
     connection_string: postgresql://username:password@hostname/dendrite?sslmode=disable
@@ -113,8 +113,7 @@ global:
   jetstream:
     # A list of NATS Server addresses to connect to. If none are specified, an
     # internal NATS server will be started automatically when running Dendrite in
-    # monolith mode. For polylith deployments, it is required to specify the address
-    # of at least one NATS Server node.
+    # monolith mode.
     addresses:
     # - localhost:4222
 
@@ -185,6 +184,33 @@ client_api:
   # recaptcha_api_js_url: "https://js.hcaptcha.com/1/api.js"
   # recaptcha_form_field: "h-captcha-response"
   # recaptcha_sitekey_class: "h-captcha"
+
+  login:
+    sso:
+      enabled: false
+      # absolute URL where a user agent can reach the Dendrite
+      # `/_matrix/v3/login/sso/callback` endpoint
+      callback_url: ""
+      # list of the identity providers
+      providers:
+        -
+          oauth2:
+            client_id: ""
+            client_secret: ""
+          oidc:
+            client_id: ""
+            client_secret: ""
+            discovery_url: ""
+          # unique identifier of this IdP
+          id: ""
+          # human-friendly name of the provider
+          name: ""
+          # hint on how to display the IdP to the user (apple, facebook, github...)
+          brand: ""
+          # MXC URI describing how to display the IdP to the user
+          icon: ""
+          # describes how this IdP is implemented (oidc, github, "")
+          type: ""
 
 
   # TURN server information that this homeserver should send to clients.

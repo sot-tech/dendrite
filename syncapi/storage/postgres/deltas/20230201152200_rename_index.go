@@ -1,4 +1,4 @@
-// Copyright 2020 The Matrix.org Foundation C.I.C.
+// Copyright 2023 The Matrix.org Foundation C.I.C.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,28 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package personalities
+package deltas
 
 import (
-	basepkg "github.com/matrix-org/dendrite/setup/base"
-	"github.com/matrix-org/dendrite/setup/config"
-	"github.com/matrix-org/dendrite/syncapi"
+	"context"
+	"database/sql"
+	"fmt"
 )
 
-func SyncAPI(base *basepkg.BaseDendrite, cfg *config.Dendrite) {
-	userAPI := base.UserAPIClient()
-
-	rsAPI := base.RoomserverHTTPClient()
-
-	syncapi.AddPublicRoutes(
-		base,
-		userAPI, rsAPI,
-		base.KeyServerHTTPClient(),
-	)
-
-	base.SetupAndServeHTTP(
-		base.Cfg.SyncAPI.InternalAPI.Listen,
-		base.Cfg.SyncAPI.ExternalAPI.Listen,
-		nil, nil,
-	)
+func UpRenameOutputRoomEventsIndex(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `ALTER TABLE syncapi_output_room_events RENAME CONSTRAINT syncapi_event_id_idx TO syncapi_output_room_event_id_idx;`)
+	if err != nil {
+		return fmt.Errorf("failed to execute upgrade: %w", err)
+	}
+	return nil
 }
