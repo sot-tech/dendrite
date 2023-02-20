@@ -188,28 +188,35 @@ client_api:
   login:
     sso:
       enabled: false
-      # absolute URL where a user agent can reach the Dendrite
-      # `/_matrix/v3/login/sso/callback` endpoint
+      # (optional) Absolute URL where a user agent can reach the Dendrite
+      # `/_matrix/client/r0/login/sso/callback` endpoint.
+      # This URL (with `?provider=<ID>` parameter) also should be
+      # marked as valid redirect url in provider configuration if
+      # it OIDC-compatible.
       callback_url: ""
-      # list of the identity providers
+      # List of the identity providers
       providers:
         -
+          # GitHub-specific
           oauth2:
             client_id: ""
             client_secret: ""
+          # Other providers
           oidc:
             client_id: ""
             client_secret: ""
+            # Full OIDC Discovery url like `https://some.provider/.well-known/openid-configuration`.
+            # See your provider specification.
             discovery_url: ""
-          # unique identifier of this IdP
+          # Unique identifier of this provider
           id: ""
-          # human-friendly name of the provider
+          # Human-friendly name of the provider
           name: ""
-          # hint on how to display the IdP to the user (apple, facebook, github...)
+          # Hint on how to display the provider to the user (apple, facebook, github...)
           brand: ""
-          # MXC URI describing how to display the IdP to the user
+          # MXC URI describing how to display the provider to the user
           icon: ""
-          # describes how this IdP is implemented (oidc, github, "")
+          # Describes how this provider is implemented (oidc, github)
           type: ""
 
 
