@@ -47,7 +47,7 @@ type oauth2IdentityProvider struct {
 	suggestedUserIDPath string
 }
 
-func (p *oauth2IdentityProvider) AuthorizationURL(ctx context.Context, callbackURL, nonce string) (string, error) {
+func (p *oauth2IdentityProvider) AuthorizationURL(_ context.Context, callbackURL, nonce string) (string, error) {
 	u, err := resolveURL(p.authorizationURL, url.Values{
 		"client_id":     []string{p.oauth2Cfg.ClientID},
 		"response_type": []string{"code"},
@@ -70,20 +70,20 @@ func (p *oauth2IdentityProvider) ProcessCallback(ctx context.Context, callbackUR
 		return nil, jsonerror.InvalidArgumentValue("state parameter not matching nonce")
 	}
 
-	if error := query.Get("error"); error != "" {
+	if err := query.Get("error"); err != "" {
 		if euri := query.Get("error_uri"); euri != "" {
 			return &CallbackResult{RedirectURL: euri}, nil
 		}
 
 		desc := query.Get("error_description")
 		if desc == "" {
-			desc = error
+			desc = err
 		}
-		switch error {
+		switch err {
 		case "unauthorized_client", "access_denied": // nolint:misspell
 			return nil, jsonerror.Forbidden("SSO said no: " + desc)
 		default:
-			return nil, fmt.Errorf("SSO failed: %v", error)
+			return nil, fmt.Errorf("SSO failed: %v", err)
 		}
 	}
 

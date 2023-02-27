@@ -164,12 +164,22 @@ func (sso *SSO) Verify(configErrs *ConfigErrors) {
 	}
 }
 
+// IdentityProvider contains settings for IdPs based on OAuth2 or OpenID Connect
 type IdentityProvider struct {
-	// OAuth2 contains settings for IdPs based on OAuth2 (but not OpenID Connect).
-	OAuth2 OAuth2 `yaml:"oauth2"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"` //FIXME: some providers allow empty secret
+	// AuthorizationURL, AccessTokenURL, UserInfoURL used only
+	// in OAuth2-based providers (OIDC uses DiscoveryURL to fetch such URLs)
+	AuthorizationURL string `yaml:"authorization_url"`
+	AccessTokenURL   string `yaml:"access_token_url"`
+	UserInfoURL      string `yaml:"user_info_url"`
+	DiscoveryURL     string `yaml:"discovery_url"`
 
-	// OIDC contains settings for IdPs based on OpenID Connect.
-	OIDC OIDC `yaml:"oidc"`
+	// Scopes list of named `rights` to get (see OAuth2 spec.)
+	Scopes []string `yaml:"scopes"`
+	// ResponseMimeType MIME type of response to expect from provider
+	ResponseMimeType string       `yaml:"response_mime_type"`
+	Claims           OAuth2Claims `yaml:"claims"`
 
 	// ID is the unique identifier of this IdP. If empty, the brand will be used.
 	ID string `yaml:"id"`
@@ -191,36 +201,57 @@ type IdentityProvider struct {
 	Type IdentityProviderType `yaml:"type"`
 }
 
+// OAuth2Claims set of fields to fetch from provider and map to MX user attributes
+type OAuth2Claims struct {
+	// Subject is the unique identifier within specific provider (may be `id`, `sub` etc...)
+	Subject     string `yaml:"subject"`
+	Email       string `yaml:"email"`
+	DisplayName string `yaml:"display_name"`
+	// SuggestedUserID is the claim to use as user localpart
+	SuggestedUserID string `yaml:"suggested_user_id"`
+}
+
 func (idp *IdentityProvider) WithDefaults() IdentityProvider {
 	p := *idp
-	if p.ID == "" {
+	if len(p.ID) == 0 {
 		p.ID = string(p.Brand)
 	}
-	if p.OIDC.DiscoveryURL == "" {
-		p.OIDC.DiscoveryURL = oidcDefaultDiscoveryURLs[idp.Brand]
+	if len(p.DiscoveryURL) == 0 {
+		p.DiscoveryURL = oidcDefaultDiscoveryURLs[idp.Brand]
 	}
-	if p.Type == "" {
-		if p.OIDC.DiscoveryURL != "" {
+	if len(p.Type) == 0 {
+		switch {
+		case len(p.DiscoveryURL) > 0:
 			p.Type = SSOTypeOIDC
-		} else if p.Brand == SSOBrandGitHub {
+			if len(p.Scopes) == 0 {
+				p.Scopes = oidcDefaultScopes
+			}
+			if len(p.Claims.Subject) == 0 {
+				p.Claims.Subject = oidcDefaultSubject
+			}
+			if len(p.Claims.Email) == 0 {
+				p.Claims.Email = oidcDefaultEmail
+			}
+			if len(p.Claims.DisplayName) == 0 {
+				p.Claims.DisplayName = oidcDefaultDisplayName
+			}
+			if len(p.Claims.SuggestedUserID) == 0 {
+				p.Claims.SuggestedUserID = oidcDefaultSuggestedUserID
+			}
+		case len(p.Brand) == 0:
+			p.Type = SSOTypeOAuth2
+		case p.Brand == SSOBrandGitHub:
 			p.Type = SSOTypeGitHub
 		}
 	}
-	if p.Name == "" {
+	if len(p.Name) == 0 {
 		p.Name = oidcDefaultNames[p.Brand]
+	}
+	if len(p.ResponseMimeType) == 0 {
+		p.ResponseMimeType = oauth2DefaultMimeType
 	}
 
 	return p
-}
-
-type OAuth2 struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-}
-
-type OIDC struct {
-	OAuth2       `yaml:",inline"`
-	DiscoveryURL string `yaml:"discovery_url"`
 }
 
 func (idp *IdentityProvider) Verify(configErrs *ConfigErrors) {
@@ -231,26 +262,29 @@ func (idp *IdentityProvider) Verify(configErrs *ConfigErrors) {
 func (idp *IdentityProvider) verifyNormalized(configErrs *ConfigErrors) {
 	checkNotEmpty(configErrs, "client_api.sso.providers.id", idp.ID)
 	checkNotEmpty(configErrs, "client_api.sso.providers.name", idp.Name)
-	if idp.Brand != "" && !checkIdentityProviderBrand(idp.Brand) {
+	if len(idp.Brand) > 0 && !checkIdentityProviderBrand(idp.Brand) {
 		configErrs.Add(fmt.Sprintf("unrecognised brand in identity provider %q for config key %q: %s", idp.ID, "client_api.sso.providers", idp.Brand))
 	}
-	if idp.Icon != "" {
-		checkIconURL(configErrs, "client_api.sso.providers.icon", idp.Icon)
+	if len(idp.Icon) > 0 {
+		checkURL(configErrs, "client_api.sso.providers.icon", idp.Icon, true)
 	}
 
 	switch idp.Type {
+	case SSOTypeOAuth2:
+		checkNotEmpty(configErrs, "client_api.sso.providers.client_id", idp.ClientID)
+		checkNotEmpty(configErrs, "client_api.sso.providers.client_secret", idp.ClientSecret)
+		checkURL(configErrs, "client_api.sso.providers.authorization_url", idp.AuthorizationURL, false)
+		checkURL(configErrs, "client_api.sso.providers.access_token_url", idp.AccessTokenURL, false)
+		checkURL(configErrs, "client_api.sso.providers.user_info_url", idp.UserInfoURL, false)
+		checkNotEmptyArray(configErrs, "client_api.sso.providers.scopes", idp.Scopes)
+		checkNotEmpty(configErrs, "client_api.sso.providers.claims.subject", idp.Claims.Subject)
 	case SSOTypeOIDC:
-		checkNotEmpty(configErrs, "client_api.sso.providers.oidc.client_id", idp.OIDC.ClientID)
-		checkNotEmpty(configErrs, "client_api.sso.providers.oidc.client_secret", idp.OIDC.ClientSecret)
-		checkNotEmpty(configErrs, "client_api.sso.providers.oidc.discovery_url", idp.OIDC.DiscoveryURL)
-
-		checkEmpty(configErrs, "client_api.sso.providers.oauth2.client_id", idp.OAuth2.ClientID)
-		checkEmpty(configErrs, "client_api.sso.providers.oauth2.client_secret", idp.OAuth2.ClientSecret)
-
+		checkNotEmpty(configErrs, "client_api.sso.providers.client_id", idp.ClientID)
+		checkNotEmpty(configErrs, "client_api.sso.providers.client_secret", idp.ClientSecret)
+		checkNotEmpty(configErrs, "client_api.sso.providers.discovery_url", idp.DiscoveryURL)
 	case SSOTypeGitHub:
-		checkNotEmpty(configErrs, "client_api.sso.providers.oauth2.client_id", idp.OAuth2.ClientID)
-		checkNotEmpty(configErrs, "client_api.sso.providers.oauth2.client_secret", idp.OAuth2.ClientSecret)
-
+		checkNotEmpty(configErrs, "client_api.sso.providers.oauth2.client_id", idp.ClientID)
+		checkNotEmpty(configErrs, "client_api.sso.providers.oauth2.client_secret", idp.ClientSecret)
 	default:
 		configErrs.Add(fmt.Sprintf("unrecognised type in identity provider %q for config key %q: %s", idp.ID, "client_api.sso.providers", idp.Type))
 	}
@@ -295,11 +329,21 @@ var (
 		SSOBrandGoogle:   "Google",
 		SSOBrandTwitter:  "Twitter",
 	}
+	oidcDefaultScopes = []string{"openid", "profile", "email"}
+)
+
+const (
+	oidcDefaultSubject         = "sub"
+	oidcDefaultEmail           = "email"
+	oidcDefaultDisplayName     = "name"
+	oidcDefaultSuggestedUserID = "preferred_username"
+	oauth2DefaultMimeType      = "application/json"
 )
 
 type IdentityProviderType string
 
 const (
+	SSOTypeOAuth2 IdentityProviderType = "oauth2"
 	SSOTypeOIDC   IdentityProviderType = "oidc"
 	SSOTypeGitHub IdentityProviderType = "github"
 )

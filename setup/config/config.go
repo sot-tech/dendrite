@@ -410,6 +410,21 @@ func checkNotEmpty(configErrs *ConfigErrors, key, value string) {
 	}
 }
 
+// checkNotEmptyArray verifies the given array value is not empty in the configuration.
+// If it is, adds an error to the list.
+func checkNotEmptyArray(configErrs *ConfigErrors, key string, value []string) {
+	isEmpty := false
+	for _, v := range value {
+		if len(v) > 0 {
+			isEmpty = false
+			break
+		}
+	}
+	if isEmpty {
+		configErrs.Add(fmt.Sprintf("missing config key %q", key))
+	}
+}
+
 // checkPositive verifies the given value is positive (zero included)
 // in the configuration. If it is not, adds an error to the list.
 func checkPositive(configErrs *ConfigErrors, key string, value int64) {
@@ -418,21 +433,25 @@ func checkPositive(configErrs *ConfigErrors, key string, value int64) {
 	}
 }
 
-// checkIconURL verifies that the parameter is a valid icon URL.
-func checkIconURL(configErrs *ConfigErrors, key, value string) {
+// checkURL verifies that the parameter is a valid URL.
+func checkURL(configErrs *ConfigErrors, key, value string, allowMXC bool) {
 	if value == "" {
 		configErrs.Add(fmt.Sprintf("missing config key %q", key))
 		return
 	}
-	url, err := url.Parse(value)
+	u, err := url.Parse(value)
 	if err != nil {
 		configErrs.Add(fmt.Sprintf("config key %q contains invalid URL (%s)", key, err.Error()))
 		return
 	}
-	switch url.Scheme {
+	switch u.Scheme {
 	case "http": // nolint:goconst
 	case "https": // nolint:goconst
 	case "mxc":
+		if allowMXC {
+			break
+		}
+		fallthrough
 	default:
 		configErrs.Add(fmt.Sprintf("invalid URL scheme for config key %q: %s", key, value))
 	}

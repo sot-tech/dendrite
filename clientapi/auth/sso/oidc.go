@@ -96,7 +96,7 @@ func (p *oidcIdentityProvider) get(ctx context.Context) (*oauth2IdentityProvider
 
 	now := time.Now()
 	if p.exp.Before(now) || p.disc == nil {
-		disc, err := oidcDiscover(ctx, p.cfg.OIDC.DiscoveryURL)
+		disc, err := oidcDiscover(ctx, p.cfg.DiscoveryURL)
 		if err != nil {
 			if p.disc != nil {
 				// Prefers returning a stale entry.
