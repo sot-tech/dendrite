@@ -41,81 +41,81 @@ const oidcDiscoveryMaxStaleness = 24 * time.Hour
 // See https://openid.net/specs/openid-connect-core-1_0.html and https://openid.net/specs/openid-connect-discovery-1_0.html.
 type oidcIdentityProvider struct {
 	*oauth2IdentityProvider
-
-	disc *oidcDiscovery
-	exp  time.Time
-	mu   sync.Mutex
+	discoveryURL string
+	issuer       string
+	exp          time.Time
+	mu           sync.Mutex
 }
 
-func newOIDCIdentityProvider(cfg *config.IdentityProvider, hc *http.Client) *oidcIdentityProvider {
-	return &oidcIdentityProvider{
+func newOIDCIdentityProvider(cfg *config.IdentityProvider, hc *http.Client) (*oidcIdentityProvider, error) {
+	p := &oidcIdentityProvider{
 		oauth2IdentityProvider: &oauth2IdentityProvider{
-			cfg:       cfg,
-			oauth2Cfg: &cfg.OIDC.OAuth2,
-			hc:        hc,
+			providerID:   cfg.ID,
+			clientID:     cfg.ClientID,
+			clientSecret: cfg.ClientSecret,
+			endpoints:    nil,
 
-			scopes:              []string{"openid", "profile", "email"},
-			responseMimeType:    "application/json",
-			subPath:             "sub",
-			emailPath:           "email", // TODO: should this require email_verified?
-			displayNamePath:     "name",
-			suggestedUserIDPath: "preferred_username",
+			scopes:           cfg.Scopes,
+			responseMimeType: cfg.ResponseMimeType,
+			claims:           &cfg.Claims, // TODO: should this require email_verified?
+
+			hc: hc,
 		},
+		discoveryURL: cfg.DiscoveryURL,
 	}
+	if !stringSliceContains(p.scopes, "openid") {
+		p.scopes = append(p.scopes, "openid")
+	}
+	err := p.reloadOIDCDiscovery(context.Background())
+	if err != nil {
+		p = nil
+	}
+	return p, err
 }
 
 func (p *oidcIdentityProvider) AuthorizationURL(ctx context.Context, callbackURL, nonce string) (string, error) {
-	oauth2p, _, err := p.get(ctx)
+	err := p.reloadOIDCDiscovery(ctx)
 	if err != nil {
 		return "", err
 	}
-	return oauth2p.AuthorizationURL(ctx, callbackURL, nonce)
+	return p.oauth2IdentityProvider.AuthorizationURL(ctx, callbackURL, nonce)
 }
 
-func (p *oidcIdentityProvider) ProcessCallback(ctx context.Context, callbackURL, nonce string, query url.Values) (*CallbackResult, error) {
-	oauth2p, disc, err := p.get(ctx)
-	if err != nil {
-		return nil, err
+func (p *oidcIdentityProvider) ProcessCallback(ctx context.Context, callbackURL, nonce string, query url.Values) (res *CallbackResult, err error) {
+	if err = p.reloadOIDCDiscovery(ctx); err == nil {
+		if res, err = p.oauth2IdentityProvider.ProcessCallback(ctx, callbackURL, nonce, query); err == nil {
+			// OIDC has the notion of issuer URL, which will be more
+			// stable than our configuration ID.
+			res.Identifier.Namespace = uapi.OIDCNamespace
+			res.Identifier.Issuer = p.issuer
+		}
 	}
-	res, err := oauth2p.ProcessCallback(ctx, callbackURL, nonce, query)
-	if err != nil {
-		return nil, err
-	}
-
-	// OIDC has the notion of issuer URL, which will be more
-	// stable than our configuration ID.
-	res.Identifier.Namespace = uapi.OIDCNamespace
-	res.Identifier.Issuer = disc.Issuer
-
-	return res, nil
+	return
 }
 
-func (p *oidcIdentityProvider) get(ctx context.Context) (*oauth2IdentityProvider, *oidcDiscovery, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+func (p *oidcIdentityProvider) reloadOIDCDiscovery(ctx context.Context) error {
 	now := time.Now()
-	if p.exp.Before(now) || p.disc == nil {
-		disc, err := oidcDiscover(ctx, p.cfg.DiscoveryURL)
+	if p.exp.Before(now) || p.endpoints == nil {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		disc, err := oidcDiscover(ctx, p.discoveryURL)
 		if err != nil {
-			if p.disc != nil {
+			if p.endpoints != nil {
 				// Prefers returning a stale entry.
-				return p.oauth2IdentityProvider, p.disc, nil
+				return nil
 			}
-			return nil, nil, err
+			return err
 		}
 
 		p.exp = now.Add(oidcDiscoveryMaxStaleness)
-		newProvider := *p.oauth2IdentityProvider
-		newProvider.authorizationURL = disc.AuthorizationEndpoint
-		newProvider.accessTokenURL = disc.TokenEndpoint
-		newProvider.userInfoURL = disc.UserinfoEndpoint
-
-		p.oauth2IdentityProvider = &newProvider
-		p.disc = disc
+		p.endpoints = &config.OAuth2Endpoints{
+			Authorization: disc.AuthorizationEndpoint,
+			AccessToken:   disc.TokenEndpoint,
+			UserInfo:      disc.UserinfoEndpoint,
+		}
+		p.issuer = disc.Issuer
 	}
-
-	return p.oauth2IdentityProvider, p.disc, nil
+	return nil
 }
 
 type oidcDiscovery struct {

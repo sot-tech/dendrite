@@ -394,14 +394,6 @@ func (errs *ConfigErrors) Add(str string) {
 	*errs = append(*errs, str)
 }
 
-// checkEmpty verifies the given value is empty in the configuration.
-// If it is, adds an error to the list.
-func checkEmpty(configErrs *ConfigErrors, key, value string) {
-	if value != "" {
-		configErrs.Add(fmt.Sprintf("expected empty key %q: %s", key, value))
-	}
-}
-
 // checkNotEmpty verifies the given value is not empty in the configuration.
 // If it is, adds an error to the list.
 func checkNotEmpty(configErrs *ConfigErrors, key, value string) {

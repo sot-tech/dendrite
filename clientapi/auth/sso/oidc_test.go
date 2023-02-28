@@ -19,20 +19,20 @@ func TestOIDCIdentityProviderAuthorizationURL(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/discovery", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"authorization_endpoint":"http://oidc.example.com/authorize","token_endpoint":"http://oidc.example.com/token","userinfo_endpoint":"http://oidc.example.com/userinfo","issuer":"http://oidc.example.com/"}`))
+		_, _ = w.Write([]byte(`{"authorization_endpoint":"http://oidc.example.com/authorize","token_endpoint":"http://oidc.example.com/token","userinfo_endpoint":"http://oidc.example.com/userinfo","issuer":"http://oidc.example.com/"}`))
 	})
 
 	s := httptest.NewServer(mux)
 	defer s.Close()
 
-	idp := newOIDCIdentityProvider(&config.IdentityProvider{
-		OIDC: config.OIDC{
-			OAuth2: config.OAuth2{
-				ClientID: "aclientid",
-			},
-			DiscoveryURL: s.URL + "/discovery",
-		},
+	idp, err := newOIDCIdentityProvider(&config.IdentityProvider{
+		ClientID:     "aclientid",
+		DiscoveryURL: s.URL + "/discovery",
+		Scopes:       []string{"openid", "profile", "email"},
 	}, s.Client())
+	if err != nil {
+		t.Fatalf("OIDC creation failed: %v", err)
+	}
 
 	got, err := idp.AuthorizationURL(ctx, "https://matrix.example.com/continue", "anonce")
 	if err != nil {
@@ -80,30 +80,34 @@ func TestOIDCIdentityProviderProcessCallback(t *testing.T) {
 			var sURL string
 			mux.HandleFunc("/discovery", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(fmt.Sprintf(`{"authorization_endpoint":"%s/authorize","token_endpoint":"%s/token","userinfo_endpoint":"%s/userinfo","issuer":"http://oidc.example.com/"}`,
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"authorization_endpoint":"%s/authorize","token_endpoint":"%s/token","userinfo_endpoint":"%s/userinfo","issuer":"http://oidc.example.com/"}`,
 					sURL, sURL, sURL)))
 			})
 			mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"access_token":"atoken", "token_type":"Bearer"}`))
+				_, _ = w.Write([]byte(`{"access_token":"atoken", "token_type":"Bearer"}`))
 			})
 			mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"sub":"asub", "name":"aname", "preferred_username":"auser"}`))
+				_, _ = w.Write([]byte(`{"sub":"asub", "name":"aname", "preferred_username":"auser"}`))
 			})
 
 			s := httptest.NewServer(mux)
 			defer s.Close()
 
 			sURL = s.URL
-			idp := newOIDCIdentityProvider(&config.IdentityProvider{
-				OIDC: config.OIDC{
-					OAuth2: config.OAuth2{
-						ClientID: "aclientid",
-					},
-					DiscoveryURL: sURL + "/discovery",
+			idp, err := newOIDCIdentityProvider(&config.IdentityProvider{
+				ClientID:     "aclientid",
+				DiscoveryURL: sURL + "/discovery",
+				Claims: config.OAuth2Claims{
+					Subject:         "sub",
+					DisplayName:     "name",
+					SuggestedUserID: "preferred_username",
 				},
 			}, s.Client())
+			if err != nil {
+				t.Fatalf("OIDC creation failed: %v", err)
+			}
 
 			got, err := idp.ProcessCallback(ctx, callbackURL, "anonce", tst.Query)
 			if err != nil {

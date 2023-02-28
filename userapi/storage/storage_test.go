@@ -471,8 +471,8 @@ func Test_SSO(t *testing.T) {
 	assert.NoError(t, err)
 
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-		db, close := mustCreateDatabase(t, dbType)
-		defer close()
+		db, closeFn := mustCreateUserDatabase(t, dbType)
+		defer closeFn()
 
 		t.Log("Create SSO association")
 

@@ -17,6 +17,7 @@ package sso
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,26 +31,41 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+var (
+	errNoSubject             = errors.New("no subject from SSO provider")
+	errCodeParameterMissing  = jsonerror.MissingArgument("code parameter missing")
+	errStateParameterMissing = jsonerror.MissingArgument("state parameter missing")
+	errStateNonceMissMatch   = jsonerror.InvalidArgumentValue("state parameter not matching nonce")
+)
+
 type oauth2IdentityProvider struct {
-	cfg       *config.IdentityProvider
-	oauth2Cfg *config.OAuth2
-	hc        *http.Client
+	clientID, clientSecret string
+	providerID             string
+	hc                     *http.Client
+	endpoints              *config.OAuth2Endpoints
+	scopes                 []string
+	claims                 *config.OAuth2Claims
+	responseMimeType       string
+}
 
-	authorizationURL string
-	accessTokenURL   string
-	userInfoURL      string
+func newOAuth2IdentityProvider(cfg *config.IdentityProvider, hc *http.Client) *oauth2IdentityProvider {
+	return &oauth2IdentityProvider{
+		providerID:   cfg.ID,
+		clientID:     cfg.ClientID,
+		clientSecret: cfg.ClientSecret,
+		endpoints:    &cfg.OAuth2Endpoints,
 
-	scopes              []string
-	responseMimeType    string
-	subPath             string
-	emailPath           string
-	displayNamePath     string
-	suggestedUserIDPath string
+		scopes:           cfg.Scopes,
+		responseMimeType: cfg.ResponseMimeType,
+		claims:           &cfg.Claims,
+
+		hc: hc,
+	}
 }
 
 func (p *oauth2IdentityProvider) AuthorizationURL(_ context.Context, callbackURL, nonce string) (string, error) {
-	u, err := resolveURL(p.authorizationURL, url.Values{
-		"client_id":     []string{p.oauth2Cfg.ClientID},
+	u, err := resolveURL(p.endpoints.Authorization, url.Values{
+		"client_id":     []string{p.clientID},
 		"response_type": []string{"code"},
 		"redirect_uri":  []string{callbackURL},
 		"scope":         []string{strings.Join(p.scopes, " ")},
@@ -64,10 +80,10 @@ func (p *oauth2IdentityProvider) AuthorizationURL(_ context.Context, callbackURL
 func (p *oauth2IdentityProvider) ProcessCallback(ctx context.Context, callbackURL, nonce string, query url.Values) (*CallbackResult, error) {
 	state := query.Get("state")
 	if state == "" {
-		return nil, jsonerror.MissingArgument("state parameter missing")
+		return nil, errStateParameterMissing
 	}
 	if state != nonce {
-		return nil, jsonerror.InvalidArgumentValue("state parameter not matching nonce")
+		return nil, errStateNonceMissMatch
 	}
 
 	if err := query.Get("error"); err != "" {
@@ -81,7 +97,7 @@ func (p *oauth2IdentityProvider) ProcessCallback(ctx context.Context, callbackUR
 		}
 		switch err {
 		case "unauthorized_client", "access_denied": // nolint:misspell
-			return nil, jsonerror.Forbidden("SSO said no: " + desc)
+			return nil, jsonerror.Forbidden("SSO access denied: " + desc)
 		default:
 			return nil, fmt.Errorf("SSO failed: %v", err)
 		}
@@ -89,7 +105,7 @@ func (p *oauth2IdentityProvider) ProcessCallback(ctx context.Context, callbackUR
 
 	code := query.Get("code")
 	if code == "" {
-		return nil, jsonerror.MissingArgument("code parameter missing")
+		return nil, errCodeParameterMissing
 	}
 
 	at, err := p.getAccessToken(ctx, callbackURL, code)
@@ -103,13 +119,13 @@ func (p *oauth2IdentityProvider) ProcessCallback(ctx context.Context, callbackUR
 	}
 
 	if subject == "" {
-		return nil, fmt.Errorf("no subject from SSO provider")
+		return nil, errNoSubject
 	}
 
 	return &CallbackResult{
 		Identifier: &UserIdentifier{
 			Namespace: uapi.SSOIDNamespace,
-			Issuer:    p.cfg.ID,
+			Issuer:    p.providerID,
 			Subject:   subject,
 		},
 		DisplayName:     displayName,
@@ -122,10 +138,11 @@ func (p *oauth2IdentityProvider) getAccessToken(ctx context.Context, callbackURL
 		"grant_type":    []string{"authorization_code"},
 		"code":          []string{code},
 		"redirect_uri":  []string{callbackURL},
-		"client_id":     []string{p.oauth2Cfg.ClientID},
-		"client_secret": []string{p.oauth2Cfg.ClientSecret},
+		"client_id":     []string{p.clientID},
+		"client_secret": []string{p.clientSecret},
 	}
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.accessTokenURL, strings.NewReader(body.Encode()))
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		p.endpoints.AccessToken, strings.NewReader(body.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -156,7 +173,7 @@ type oauth2TokenResponse struct {
 }
 
 func (p *oauth2IdentityProvider) getUserInfo(ctx context.Context, accessToken string) (subject, displayName, suggestedLocalpart string, _ error) {
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.userInfoURL, nil)
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.endpoints.UserInfo, nil)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -174,8 +191,9 @@ func (p *oauth2IdentityProvider) getUserInfo(ctx context.Context, accessToken st
 		return "", "", "", err
 	}
 
-	if res := gjson.GetBytes(body, p.subPath); !res.Exists() {
-		return "", "", "", fmt.Errorf("no %q in user info response body", p.subPath)
+	if res := gjson.GetBytes(body, p.claims.Subject); !res.Exists() {
+		return "", "", "",
+			fmt.Errorf("no %q in user info response body", p.claims.Subject)
 	} else {
 		subject = res.String()
 	}
@@ -183,12 +201,12 @@ func (p *oauth2IdentityProvider) getUserInfo(ctx context.Context, accessToken st
 		return "", "", "", fmt.Errorf("empty subject in user info")
 	}
 
-	if p.suggestedUserIDPath != "" {
-		suggestedLocalpart = gjson.GetBytes(body, p.suggestedUserIDPath).String()
+	if p.claims.SuggestedUserID != "" {
+		suggestedLocalpart = gjson.GetBytes(body, p.claims.SuggestedUserID).String()
 	}
 
-	if p.displayNamePath != "" {
-		displayName = gjson.GetBytes(body, p.displayNamePath).String()
+	if p.claims.DisplayName != "" {
+		displayName = gjson.GetBytes(body, p.claims.DisplayName).String()
 	}
 
 	return
@@ -220,7 +238,7 @@ func httpDo(ctx context.Context, hc *http.Client, req *http.Request) (*http.Resp
 				util.GetLogger(ctx).WithField("url", req.URL.String()).WithField("status", resp.StatusCode).Warnf("OAuth2 HTTP request failed: %+v", &body)
 			}
 			if body.Error != "" {
-				return nil, fmt.Errorf("OAuth2 request %q failed: %s (%s)", req.URL.String(), resp.Status, body.Error)
+				return nil, fmt.Errorf("oauth2 request %q failed: %s (%s)", req.URL.String(), resp.Status, body.Error)
 			}
 		}
 
@@ -229,10 +247,10 @@ func httpDo(ctx context.Context, hc *http.Client, req *http.Request) (*http.Resp
 			if len(hdr) > 80 {
 				hdr = hdr[:80]
 			}
-			return nil, fmt.Errorf("OAuth2 request %q failed: %s (%s)", req.URL.String(), resp.Status, hdr)
+			return nil, fmt.Errorf("oauth2 request %q failed: %s (%s)", req.URL.String(), resp.Status, hdr)
 		}
 
-		return nil, fmt.Errorf("OAuth2 HTTP request %q failed: %s", req.URL.String(), resp.Status)
+		return nil, fmt.Errorf("oauth2 HTTP request %q failed: %s", req.URL.String(), resp.Status)
 	}
 
 	return resp, nil

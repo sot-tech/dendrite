@@ -16,16 +16,12 @@ func TestOAuth2IdentityProviderAuthorizationURL(t *testing.T) {
 	ctx := context.Background()
 
 	idp := &oauth2IdentityProvider{
-		cfg: &config.IdentityProvider{
-			OAuth2: config.OAuth2{
-				ClientID: "aclientid",
-			},
+		clientID: "aclientid",
+		hc:       http.DefaultClient,
+		endpoints: &config.OAuth2Endpoints{
+			Authorization: "https://oauth2.example.com/authorize",
 		},
-		hc: http.DefaultClient,
-
-		authorizationURL: "https://oauth2.example.com/authorize",
 	}
-	idp.oauth2Cfg = &idp.cfg.OAuth2
 
 	got, err := idp.AuthorizationURL(ctx, "https://matrix.example.com/continue", "anonce")
 	if err != nil {
@@ -72,34 +68,32 @@ func TestOAuth2IdentityProviderProcessCallback(t *testing.T) {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"access_token":"atoken", "token_type":"Bearer"}`))
+				_, _ = w.Write([]byte(`{"access_token":"atoken", "token_type":"Bearer"}`))
 			})
 			mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"sub":"asub", "name":"aname", "preferred_user":"auser"}`))
+				_, _ = w.Write([]byte(`{"sub":"asub", "name":"aname", "preferred_user":"auser"}`))
 			})
 
 			s := httptest.NewServer(mux)
 			defer s.Close()
 
 			idp := &oauth2IdentityProvider{
-				cfg: &config.IdentityProvider{
-					ID: "anid",
-					OAuth2: config.OAuth2{
-						ClientID:     "aclientid",
-						ClientSecret: "aclientsecret",
-					},
+				providerID:   "anid",
+				clientID:     "aclientid",
+				clientSecret: "aclientsecret",
+				hc:           s.Client(),
+
+				endpoints: &config.OAuth2Endpoints{
+					AccessToken: s.URL + "/token",
+					UserInfo:    s.URL + "/userinfo",
 				},
-				hc: s.Client(),
-
-				accessTokenURL: s.URL + "/token",
-				userInfoURL:    s.URL + "/userinfo",
-
-				subPath:             "sub",
-				displayNamePath:     "name",
-				suggestedUserIDPath: "preferred_user",
+				claims: &config.OAuth2Claims{
+					Subject:         "sub",
+					DisplayName:     "name",
+					SuggestedUserID: "preferred_user",
+				},
 			}
-			idp.oauth2Cfg = &idp.cfg.OAuth2
 
 			got, err := idp.ProcessCallback(ctx, callbackURL, "anonce", tst.Query)
 			if err != nil {
@@ -129,25 +123,19 @@ func TestOAuth2IdentityProviderGetAccessToken(t *testing.T) {
 		gotReq = r.Form
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"access_token":"atoken", "token_type":"Bearer"}`))
+		_, _ = w.Write([]byte(`{"access_token":"atoken", "token_type":"Bearer"}`))
 	})
 
 	s := httptest.NewServer(mux)
 	defer s.Close()
 
 	idp := &oauth2IdentityProvider{
-		cfg: &config.IdentityProvider{
-			ID: "anid",
-			OAuth2: config.OAuth2{
-				ClientID:     "aclientid",
-				ClientSecret: "aclientsecret",
-			},
-		},
-		hc: s.Client(),
-
-		accessTokenURL: s.URL + "/token",
+		providerID:   "anid",
+		clientID:     "aclientid",
+		clientSecret: "aclientsecret",
+		hc:           s.Client(),
+		endpoints:    &config.OAuth2Endpoints{AccessToken: s.URL + "/token"},
 	}
-	idp.oauth2Cfg = &idp.cfg.OAuth2
 
 	got, err := idp.getAccessToken(ctx, callbackURL, "acode")
 	if err != nil {
@@ -178,30 +166,26 @@ func TestOAuth2IdentityProviderGetUserInfo(t *testing.T) {
 	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
 		gotHeader = r.Header
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"sub":"asub", "name":"aname", "preferred_user":"auser"}`))
+		_, _ = w.Write([]byte(`{"sub":"asub", "name":"aname", "preferred_user":"auser"}`))
 	})
 
 	s := httptest.NewServer(mux)
 	defer s.Close()
 
 	idp := &oauth2IdentityProvider{
-		cfg: &config.IdentityProvider{
-			ID: "anid",
-			OAuth2: config.OAuth2{
-				ClientID:     "aclientid",
-				ClientSecret: "aclientsecret",
-			},
+		providerID:   "anid",
+		clientID:     "aclientid",
+		clientSecret: "aclientsecret",
+		hc:           s.Client(),
+		endpoints:    &config.OAuth2Endpoints{UserInfo: s.URL + "/userinfo"},
+
+		responseMimeType: "application/json",
+		claims: &config.OAuth2Claims{
+			Subject:         "sub",
+			DisplayName:     "name",
+			SuggestedUserID: "preferred_user",
 		},
-		hc: s.Client(),
-
-		userInfoURL: s.URL + "/userinfo",
-
-		responseMimeType:    "application/json",
-		subPath:             "sub",
-		displayNamePath:     "name",
-		suggestedUserIDPath: "preferred_user",
 	}
-	idp.oauth2Cfg = &idp.cfg.OAuth2
 
 	gotSub, gotName, gotSuggestedUser, err := idp.getUserInfo(ctx, "atoken")
 	if err != nil {

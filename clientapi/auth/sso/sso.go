@@ -36,7 +36,7 @@ type Authenticator struct {
 	providers map[string]identityProvider
 }
 
-func NewAuthenticator(cfg *config.SSO) (*Authenticator, error) {
+func NewAuthenticator(cfg *config.SSO) (a *Authenticator, err error) {
 	hc := &http.Client{
 		Timeout: maxHTTPTimeout,
 		Transport: &http.Transport{
@@ -45,23 +45,29 @@ func NewAuthenticator(cfg *config.SSO) (*Authenticator, error) {
 		},
 	}
 
-	a := &Authenticator{
+	a = &Authenticator{
 		providers: make(map[string]identityProvider, len(cfg.Providers)),
 	}
 	for _, pcfg := range cfg.Providers {
 		pcfg = pcfg.WithDefaults()
 
 		switch pcfg.Type {
+		case config.SSOTypeOAuth2:
+			a.providers[pcfg.ID] = newOAuth2IdentityProvider(&pcfg, hc)
 		case config.SSOTypeOIDC:
-			a.providers[pcfg.ID] = newOIDCIdentityProvider(&pcfg, hc)
+			a.providers[pcfg.ID], err = newOIDCIdentityProvider(&pcfg, hc)
 		case config.SSOTypeGitHub:
 			a.providers[pcfg.ID] = newGitHubIdentityProvider(&pcfg, hc)
 		default:
-			return nil, fmt.Errorf("unknown SSO provider type: %s", pcfg.Type)
+			err = fmt.Errorf("unknown SSO provider type: %s", pcfg.Type)
+		}
+		if err != nil {
+			a = nil
+			break
 		}
 	}
 
-	return a, nil
+	return
 }
 
 func (auth *Authenticator) AuthorizationURL(ctx context.Context, providerID, callbackURL, nonce string) (string, error) {

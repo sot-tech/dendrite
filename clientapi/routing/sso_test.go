@@ -505,7 +505,7 @@ type fakeSSOAuthenticator struct {
 	callbackErr    error
 }
 
-func (auth *fakeSSOAuthenticator) AuthorizationURL(ctx context.Context, providerID, callbackURL, nonce string) (string, error) {
+func (auth *fakeSSOAuthenticator) AuthorizationURL(_ context.Context, providerID, callbackURL, nonce string) (string, error) {
 	if providerID == "" {
 		return "", errors.New("empty providerID")
 	}
@@ -523,7 +523,7 @@ func (auth *fakeSSOAuthenticator) AuthorizationURL(ctx context.Context, provider
 	}).String(), nil
 }
 
-func (auth *fakeSSOAuthenticator) ProcessCallback(ctx context.Context, providerID, callbackURL, nonce string, query url.Values) (*sso.CallbackResult, error) {
+func (auth *fakeSSOAuthenticator) ProcessCallback(_ context.Context, _, _, _ string, _ url.Values) (*sso.CallbackResult, error) {
 	return &auth.callbackResult, auth.callbackErr
 }
 
@@ -543,12 +543,12 @@ type fakeUserAPIForSSO struct {
 	gotQueryLocalpart     []*uapi.QueryLocalpartForSSORequest
 }
 
-func (userAPI *fakeUserAPIForSSO) PerformAccountCreation(ctx context.Context, req *uapi.PerformAccountCreationRequest, res *uapi.PerformAccountCreationResponse) error {
+func (userAPI *fakeUserAPIForSSO) PerformAccountCreation(_ context.Context, req *uapi.PerformAccountCreationRequest, _ *uapi.PerformAccountCreationResponse) error {
 	userAPI.gotAccountCreation = append(userAPI.gotAccountCreation, req)
 	return userAPI.accountCreationErr
 }
 
-func (userAPI *fakeUserAPIForSSO) PerformLoginTokenCreation(ctx context.Context, req *uapi.PerformLoginTokenCreationRequest, res *uapi.PerformLoginTokenCreationResponse) error {
+func (userAPI *fakeUserAPIForSSO) PerformLoginTokenCreation(_ context.Context, req *uapi.PerformLoginTokenCreationRequest, res *uapi.PerformLoginTokenCreationResponse) error {
 	userAPI.gotLoginTokenCreation = append(userAPI.gotLoginTokenCreation, req)
 	res.Metadata = uapi.LoginTokenMetadata{
 		Token: "atoken",
@@ -556,18 +556,18 @@ func (userAPI *fakeUserAPIForSSO) PerformLoginTokenCreation(ctx context.Context,
 	return userAPI.tokenTokenCreationErr
 }
 
-func (userAPI *fakeUserAPIForSSO) PerformSaveSSOAssociation(ctx context.Context, req *uapi.PerformSaveSSOAssociationRequest, res *struct{}) error {
+func (userAPI *fakeUserAPIForSSO) PerformSaveSSOAssociation(_ context.Context, req *uapi.PerformSaveSSOAssociationRequest, _ *struct{}) error {
 	userAPI.gotSaveSSOAssociation = append(userAPI.gotSaveSSOAssociation, req)
 	return userAPI.saveSSOAssociationErr
 }
 
-func (userAPI *fakeUserAPIForSSO) QueryLocalpartForSSO(ctx context.Context, req *uapi.QueryLocalpartForSSORequest, res *uapi.QueryLocalpartForSSOResponse) error {
+func (userAPI *fakeUserAPIForSSO) QueryLocalpartForSSO(_ context.Context, req *uapi.QueryLocalpartForSSORequest, res *uapi.QueryLocalpartForSSOResponse) error {
 	userAPI.gotQueryLocalpart = append(userAPI.gotQueryLocalpart, req)
 	res.Localpart = userAPI.localpart
 	return userAPI.localpartErr
 }
 
-func (userAPI *fakeUserAPIForSSO) QueryNumericLocalpart(ctx context.Context, res *uapi.QueryNumericLocalpartResponse) error {
+func (userAPI *fakeUserAPIForSSO) QueryNumericLocalpart(_ context.Context, _ *uapi.QueryNumericLocalpartRequest, res *uapi.QueryNumericLocalpartResponse) error {
 	res.ID = 12345
 	return userAPI.numericLocalpartErr
 }

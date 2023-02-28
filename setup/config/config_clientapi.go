@@ -168,12 +168,10 @@ func (sso *SSO) Verify(configErrs *ConfigErrors) {
 type IdentityProvider struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"` //FIXME: some providers allow empty secret
-	// AuthorizationURL, AccessTokenURL, UserInfoURL used only
-	// in OAuth2-based providers (OIDC uses DiscoveryURL to fetch such URLs)
-	AuthorizationURL string `yaml:"authorization_url"`
-	AccessTokenURL   string `yaml:"access_token_url"`
-	UserInfoURL      string `yaml:"user_info_url"`
-	DiscoveryURL     string `yaml:"discovery_url"`
+
+	OAuth2Endpoints `yaml:",inline"`
+	// DiscoveryURL should be used only if provider OIDC-compatible and supports OIDC Discovery
+	DiscoveryURL string `yaml:"discovery_url"`
 
 	// Scopes list of named `rights` to get (see OAuth2 spec.)
 	Scopes []string `yaml:"scopes"`
@@ -209,6 +207,14 @@ type OAuth2Claims struct {
 	DisplayName string `yaml:"display_name"`
 	// SuggestedUserID is the claim to use as user localpart
 	SuggestedUserID string `yaml:"suggested_user_id"`
+}
+
+// OAuth2Endpoints used only in OAuth2-based providers
+// (OIDC uses IdentityProvider.DiscoveryURL to fetch such URLs)
+type OAuth2Endpoints struct {
+	Authorization string `yaml:"authorization_url"`
+	AccessToken   string `yaml:"access_token_url"`
+	UserInfo      string `yaml:"user_info_url"`
 }
 
 func (idp *IdentityProvider) WithDefaults() IdentityProvider {
@@ -273,9 +279,9 @@ func (idp *IdentityProvider) verifyNormalized(configErrs *ConfigErrors) {
 	case SSOTypeOAuth2:
 		checkNotEmpty(configErrs, "client_api.sso.providers.client_id", idp.ClientID)
 		checkNotEmpty(configErrs, "client_api.sso.providers.client_secret", idp.ClientSecret)
-		checkURL(configErrs, "client_api.sso.providers.authorization_url", idp.AuthorizationURL, false)
-		checkURL(configErrs, "client_api.sso.providers.access_token_url", idp.AccessTokenURL, false)
-		checkURL(configErrs, "client_api.sso.providers.user_info_url", idp.UserInfoURL, false)
+		checkURL(configErrs, "client_api.sso.providers.authorization_url", idp.Authorization, false)
+		checkURL(configErrs, "client_api.sso.providers.access_token_url", idp.AccessToken, false)
+		checkURL(configErrs, "client_api.sso.providers.user_info_url", idp.UserInfo, false)
 		checkNotEmptyArray(configErrs, "client_api.sso.providers.scopes", idp.Scopes)
 		checkNotEmpty(configErrs, "client_api.sso.providers.claims.subject", idp.Claims.Subject)
 	case SSOTypeOIDC:

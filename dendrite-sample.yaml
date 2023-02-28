@@ -196,30 +196,42 @@ client_api:
       callback_url: ""
       # List of the identity providers
       providers:
-        -
-          # GitHub-specific
-          oauth2:
-            client_id: ""
-            client_secret: ""
-          # Other providers
-          oidc:
-            client_id: ""
-            client_secret: ""
-            # Full OIDC Discovery url like `https://some.provider/.well-known/openid-configuration`.
-            # See your provider specification.
-            discovery_url: ""
+        - # Describes how this provider is implemented (oauth2, oidc, github)
+          type: "oidc"
           # Unique identifier of this provider
           id: ""
           # Human-friendly name of the provider
           name: ""
+          # ID and secret from provider
+          client_id: ""
+          client_secret: ""
+          # Full OIDC Discovery url like `https://some.provider/.well-known/openid-configuration`.
+          # Used only if `oidc` type provided.
+          discovery_url: ""
+          # List of scopes (rights/attributes) to fetch
+          scopes: ["openid", "profile", "email"]
+          # Map of provider's attributes to user attributes
+          claims:
+            # Unique identifier
+            subject: "sub"
+            email: "email"
+            display_name: "name"
+            # MX localpart
+            suggested_user_id: "preferred_username"
+
+          # `authorization_url`, `access_token_url` and `user_info_url` URLs required
+          # only if `oauth2` type used. OIDC-compatible provider can fetch such
+          # URLs from `discovery_url`
+          authorization_url: ""
+          access_token_url: ""
+          user_info_url: ""
+          # Expected provider response MIME type
+          response_mime_type: "application/json"
+
           # Hint on how to display the provider to the user (apple, facebook, github...)
           brand: ""
           # MXC URI describing how to display the provider to the user
           icon: ""
-          # Describes how this provider is implemented (oidc, github)
-          type: ""
-
-
   # TURN server information that this homeserver should send to clients.
   turn:
     turn_user_lifetime: "5m"

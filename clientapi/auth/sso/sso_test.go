@@ -2,6 +2,8 @@ package sso
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"testing"
@@ -10,22 +12,24 @@ import (
 )
 
 func TestNewAuthenticator(t *testing.T) {
+	testSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"authorization_endpoint":"http://localhost/authorize",
+								"token_endpoint":"http://localhost/token",
+								"userinfo_endpoint":"http://localhost/userinfo",
+								"issuer":"http://localhost/"}`))
+	}))
+	defer testSrv.Close()
 	_, err := NewAuthenticator(&config.SSO{
 		Providers: []config.IdentityProvider{
 			{
-				Type: config.SSOTypeGitHub,
-				OAuth2: config.OAuth2{
-					ClientID: "aclientid",
-				},
+				Type:     config.SSOTypeGitHub,
+				ClientID: "aclientid",
 			},
 			{
-				Type: config.SSOTypeOIDC,
-				OIDC: config.OIDC{
-					OAuth2: config.OAuth2{
-						ClientID: "aclientid",
-					},
-					DiscoveryURL: "http://oidc.example.com/discovery",
-				},
+				Type:         config.SSOTypeOIDC,
+				ClientID:     "aclientid",
+				DiscoveryURL: testSrv.URL + "/discovery",
 			},
 		},
 	})
@@ -67,10 +71,10 @@ func TestAuthenticator(t *testing.T) {
 
 type fakeIdentityProvider struct{}
 
-func (idp *fakeIdentityProvider) AuthorizationURL(ctx context.Context, callbackURL, nonce string) (string, error) {
+func (idp *fakeIdentityProvider) AuthorizationURL(_ context.Context, _, _ string) (string, error) {
 	return "aurl", nil
 }
 
-func (idp *fakeIdentityProvider) ProcessCallback(ctx context.Context, callbackURL, nonce string, query url.Values) (*CallbackResult, error) {
+func (idp *fakeIdentityProvider) ProcessCallback(_ context.Context, _, _ string, _ url.Values) (*CallbackResult, error) {
 	return &CallbackResult{DisplayName: "aname"}, nil
 }

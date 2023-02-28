@@ -26,7 +26,7 @@ func main() {
 			Version: config.Version,
 		}
 		cfg.Defaults(config.DefaultOpts{
-			Generate:   true,
+			Generate:       true,
 			SingleDatabase: true,
 		})
 		if *serverName != "" {
@@ -72,21 +72,17 @@ func main() {
 			cfg.ClientAPI.Login.SSO.Enabled = true
 			cfg.ClientAPI.Login.SSO.Providers = []config.IdentityProvider{
 				{
-					Brand: "github",
-					OAuth2: config.OAuth2{
-						ClientID:     "aclientid",
-						ClientSecret: "aclientsecret",
-					},
+					Type:         config.SSOTypeGitHub,
+					Brand:        config.SSOBrandGitHub,
+					ClientID:     "aclientid",
+					ClientSecret: "aclientsecret",
 				},
 				{
-					Brand: "google",
-					OIDC: config.OIDC{
-						OAuth2: config.OAuth2{
-							ClientID:     "aclientid",
-							ClientSecret: "aclientsecret",
-						},
-						DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration",
-					},
+					Type:         config.SSOTypeOIDC,
+					Brand:        config.SSOBrandGoogle,
+					ClientID:     "aclientid",
+					ClientSecret: "aclientsecret",
+					DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration",
 				},
 			}
 			cfg.FederationAPI.DisableTLSValidation = false

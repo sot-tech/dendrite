@@ -21,20 +21,18 @@ import (
 )
 
 func newGitHubIdentityProvider(cfg *config.IdentityProvider, hc *http.Client) identityProvider {
-	return &oauth2IdentityProvider{
-		cfg:       cfg,
-		oauth2Cfg: &cfg.OAuth2,
-		hc:        hc,
-
-		authorizationURL: "https://github.com/login/oauth/authorize",
-		accessTokenURL:   "https://github.com/login/oauth/access_token",
-		userInfoURL:      "https://api.github.com/user",
-
-		scopes:              []string{"user:email"},
-		responseMimeType:    "application/vnd.github.v3+json",
-		subPath:             "id",
-		emailPath:           "email",
-		displayNamePath:     "name",
-		suggestedUserIDPath: "login",
+	cfg.Scopes = []string{"user:email"}
+	cfg.OAuth2Endpoints = config.OAuth2Endpoints{
+		Authorization: "https://github.com/login/oauth/authorize",
+		AccessToken:   "https://github.com/login/oauth/access_token",
+		UserInfo:      "https://api.github.com/user",
 	}
+	cfg.ResponseMimeType = "application/vnd.github.v3+json"
+	cfg.Claims = config.OAuth2Claims{
+		Subject:         "id",
+		Email:           "email",
+		DisplayName:     "name",
+		SuggestedUserID: "login",
+	}
+	return newOAuth2IdentityProvider(cfg, hc)
 }
