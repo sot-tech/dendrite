@@ -3,7 +3,7 @@ name: Dendrite
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - '**.go'                 # only execute on changes to go files
       - '.github/workflows/**'  # or workflow changes
