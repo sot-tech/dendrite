@@ -20,7 +20,7 @@ import (
 	"github.com/matrix-org/dendrite/setup/config"
 )
 
-func newGitHubIdentityProvider(cfg *config.IdentityProvider, hc *http.Client) identityProvider {
+func newGitHubIdentityProvider(cfg *config.IdentityProvider, hc *http.Client) (identityProvider, error) {
 	cfg.Scopes = []string{"user:email"}
 	cfg.OAuth2Endpoints = config.OAuth2Endpoints{
 		Authorization: "https://github.com/login/oauth/authorize",

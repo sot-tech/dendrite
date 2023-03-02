@@ -18,14 +18,16 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/matrix-org/dendrite/clientapi/auth/authtypes"
+	"github.com/matrix-org/dendrite/clientapi/auth/sso"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/matrix-org/dendrite/clientapi/auth/sso"
 	"github.com/matrix-org/dendrite/clientapi/jsonerror"
 	"github.com/matrix-org/dendrite/clientapi/userutil"
 	"github.com/matrix-org/dendrite/setup/config"
@@ -33,6 +35,73 @@ import (
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/util"
 )
+
+const ssoIdpListTemplate = `
+<html>
+<head>
+<title>Authentication</title>
+<meta name='viewport' content='width=device-width, initial-scale=1,
+    user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
+<style>
+p {text-align: center;}
+</style>
+</head>
+<body>
+<p>
+Hello! We need to prevent computer programs and other automated
+things from creating accounts on this server.
+<br>
+Please, select SSO provider to authenticate.
+</p>
+{{range $idpName, $idpURL := .}}
+<p><a href="{{$idpURL}}">{{$idpName}}</a></p>
+{{end}}
+</body>
+</html>
+`
+
+const (
+	ssoCallbackPath = "/login/sso/callback"
+	ssoRedirectPath = "/login/sso/redirect"
+	ssoFallBackPath = "/auth/" + authtypes.LoginTypeSSO + "/fallback/web"
+
+	ssoLoginTokenParameter      = "loginToken"
+	ssoFallbackSessionParameter = "session"
+	ssoProviderParameter        = "provider"
+	ssoRedirectURLParameter     = "redirectUrl"
+	ssoFallbackConfirmationTTL  = defaultTimeOut
+
+	ssoNonceCookie = "sso_nonce"
+)
+
+var (
+	respDisabled = util.JSONResponse{
+		Code: http.StatusNotFound,
+		JSON: jsonerror.NotFound("authentication method disabled"),
+	}
+
+	respMissingRedirect = util.JSONResponse{
+		Code: http.StatusBadRequest,
+		JSON: jsonerror.MissingArgument("redirectUrl parameter missing"),
+	}
+	respMissingProvider = util.JSONResponse{
+		Code: http.StatusBadRequest,
+		JSON: jsonerror.MissingArgument("provider parameter missing"),
+	}
+
+	respUnknownID = util.JSONResponse{
+		Code: http.StatusUnauthorized,
+		JSON: jsonerror.Forbidden("ID not associated with a local account"),
+	}
+
+	ssoFallbackConfirmations   = make(map[string]ssoFallbackConfirmationData)
+	ssoFallbackConfirmationsMu = sync.RWMutex{}
+)
+
+type ssoFallbackConfirmationData struct {
+	time.Time
+	sessionID string
+}
 
 // SSORedirect implements /login/sso/redirect
 // https://spec.matrix.org/v1.2/client-server-api/#redirecting-to-the-authentication-server
@@ -45,30 +114,24 @@ func SSORedirect(
 	ctx := req.Context()
 
 	if auth == nil {
-		return util.JSONResponse{
-			Code: http.StatusNotFound,
-			JSON: jsonerror.NotFound("authentication method disabled"),
-		}
+		return respDisabled
 	}
 
-	redirectURL := req.URL.Query().Get("redirectUrl")
+	redirectURL := req.URL.Query().Get(ssoRedirectURLParameter)
 	if redirectURL == "" {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: jsonerror.MissingArgument("redirectUrl parameter missing"),
-		}
+		return respMissingRedirect
 	}
-	if ru, err := url.Parse(redirectURL); err != nil {
+	if _, err := url.Parse(redirectURL); err != nil {
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: jsonerror.InvalidArgumentValue("Invalid redirectURL: " + err.Error()),
 		}
-	} else if ru.Scheme == "" || ru.Host == "" {
+	} /*else if ru.Scheme == "" || ru.Host == "" {
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: jsonerror.InvalidArgumentValue("Invalid redirectURL: " + redirectURL),
 		}
-	}
+	}*/
 
 	if idpID == "" {
 		idpID = cfg.DefaultProviderID
@@ -77,7 +140,7 @@ func SSORedirect(
 		}
 	}
 
-	callbackURL, err := buildCallbackURLFromOther(cfg, req, "/login/sso/redirect")
+	callbackURL, err := buildURLFromOther(cfg, req, ssoRedirectPath, ssoCallbackPath)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("Failed to build callback URL")
 		return util.JSONResponse{
@@ -87,7 +150,7 @@ func SSORedirect(
 	}
 
 	callbackURL = callbackURL.ResolveReference(&url.URL{
-		RawQuery: url.Values{"provider": []string{idpID}}.Encode(),
+		RawQuery: url.Values{ssoProviderParameter: []string{idpID}}.Encode(),
 	})
 	nonce := formatNonce(redirectURL)
 	u, err := auth.AuthorizationURL(ctx, idpID, callbackURL.String(), nonce)
@@ -119,9 +182,9 @@ func SSORedirect(
 	return resp
 }
 
-// buildCallbackURLFromOther builds a callback URL from another SSO
+// buildURLFromOther builds a replaced URL from another SSO
 // request and configuration.
-func buildCallbackURLFromOther(cfg *config.SSO, req *http.Request, expectedPath string) (*url.URL, error) {
+func buildURLFromOther(cfg *config.SSO, req *http.Request, expectedPath, replacePath string) (*url.URL, error) {
 	u := &url.URL{
 		Scheme: "https",
 		Host:   req.Host,
@@ -137,7 +200,7 @@ func buildCallbackURLFromOther(cfg *config.SSO, req *http.Request, expectedPath 
 	if i < 0 {
 		return nil, fmt.Errorf("cannot find %q to replace in URL %q", expectedPath, u.Path)
 	}
-	u.Path = u.Path[:i] + "/login/sso/callback"
+	u.Path = u.Path[:i] + replacePath
 
 	cu, err := url.Parse(cfg.CallbackURL)
 	if err != nil {
@@ -156,24 +219,18 @@ func SSOCallback(
 	serverName gomatrixserverlib.ServerName,
 ) util.JSONResponse {
 	if auth == nil {
-		return util.JSONResponse{
-			Code: http.StatusNotFound,
-			JSON: jsonerror.NotFound("authentication method disabled"),
-		}
+		return respDisabled
 	}
 
 	ctx := req.Context()
 
 	query := req.URL.Query()
-	idpID := query.Get("provider")
+	idpID := query.Get(ssoProviderParameter)
 	if idpID == "" {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: jsonerror.MissingArgument("provider parameter missing"),
-		}
+		return respMissingProvider
 	}
 
-	nonce, err := req.Cookie("sso_nonce")
+	nonce, err := req.Cookie(ssoNonceCookie)
 	if err != nil {
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
@@ -188,7 +245,7 @@ func SSOCallback(
 		}
 	}
 
-	callbackURL, err := buildCallbackURLFromOther(cfg, req, "/login/sso/callback")
+	callbackURL, err := buildURLFromOther(cfg, req, ssoCallbackPath, ssoCallbackPath)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("Failed to build callback URL")
 		return util.JSONResponse{
@@ -198,7 +255,7 @@ func SSOCallback(
 	}
 
 	callbackURL = callbackURL.ResolveReference(&url.URL{
-		RawQuery: url.Values{"provider": []string{idpID}}.Encode(),
+		RawQuery: url.Values{ssoProviderParameter: []string{idpID}}.Encode(),
 	})
 	result, err := auth.ProcessCallback(ctx, idpID, callbackURL.String(), nonce.Value, query)
 	if err != nil {
@@ -218,53 +275,126 @@ func SSOCallback(
 	localpart, err := verifySSOUserIdentifier(ctx, userAPI, result.Identifier)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).WithField("ssoIdentifier", result.Identifier).Error("failed to find user")
-		return util.JSONResponse{
-			Code: http.StatusUnauthorized,
-			JSON: jsonerror.Forbidden("ID not associated with a local account"),
-		}
+		return respUnknownID
 	}
+
+	fallback, finalRedirectQuery := strings.Index(finalRedirectURL.Path, ssoFallBackPath) >= 0, finalRedirectURL.Query()
 	if localpart == "" {
-		// The user doesn't exist.
-		// TODO: let the user select the local part, and whether to associate email addresses.
-		util.GetLogger(ctx).WithField("localpart", result.SuggestedUserID).WithField("ssoIdentifier", result.Identifier).Info("SSO registering account")
-		localpart = result.SuggestedUserID
-		if localpart == "" {
-			util.GetLogger(ctx).WithField("ssoIdentifier", result.Identifier).Info("no suggested user ID from SSO provider")
-			var res uapi.QueryNumericLocalpartResponse
-			nreq := &uapi.QueryNumericLocalpartRequest{
-				ServerName: serverName,
+		if !fallback {
+			// The user doesn't exist.
+			// TODO: let the user select the local part, and whether to associate email addresses.
+			util.GetLogger(ctx).WithField("localpart", result.SuggestedUserID).WithField("ssoIdentifier", result.Identifier).Info("SSO registering account")
+			localpart = result.SuggestedUserID
+			if localpart == "" {
+				util.GetLogger(ctx).WithField("ssoIdentifier", result.Identifier).Info("no suggested user ID from SSO provider")
+				var res uapi.QueryNumericLocalpartResponse
+				nreq := &uapi.QueryNumericLocalpartRequest{
+					ServerName: serverName,
+				}
+				if err = userAPI.QueryNumericLocalpart(ctx, nreq, &res); err != nil {
+					util.GetLogger(ctx).WithError(err).WithField("ssoIdentifier", result.Identifier).Error("failed to generate numeric localpart")
+					return jsonerror.InternalServerError()
+				}
+				localpart = strconv.FormatInt(res.ID, 10)
 			}
-			if err = userAPI.QueryNumericLocalpart(ctx, nreq, &res); err != nil {
-				util.GetLogger(ctx).WithError(err).WithField("ssoIdentifier", result.Identifier).Error("failed to generate numeric localpart")
-				return jsonerror.InternalServerError()
-			}
-			localpart = strconv.FormatInt(res.ID, 10)
-		}
 
-		ok, resp := registerSSOAccount(ctx, userAPI, result.Identifier, localpart)
-		if !ok {
-			util.GetLogger(ctx).WithError(err).WithField("ssoIdentifier", result.Identifier).WithField("localpart", localpart).Error("failed to register account")
-			return resp
+			ok, resp := registerSSOAccount(ctx, userAPI, result.Identifier, localpart)
+			if !ok {
+				util.GetLogger(ctx).WithError(err).WithField("ssoIdentifier", result.Identifier).WithField("localpart", localpart).Error("failed to register account")
+				return resp
+			}
+		} else {
+			return respUnknownID
 		}
 	}
 
-	token, err := createLoginToken(ctx, userAPI, userutil.MakeUserID(localpart, serverName))
-	if err != nil {
-		util.GetLogger(ctx).WithError(err).Errorf("PerformLoginTokenCreation failed")
-		return jsonerror.InternalServerError()
-	}
-	util.GetLogger(ctx).WithField("localpart", localpart).WithField("ssoIdentifier", result.Identifier).Info("SSO created token")
+	if fallback {
+		fallbackSession := finalRedirectQuery.Get(ssoFallbackSessionParameter)
+		if len(fallbackSession) == 0 {
+			return respUnknownID
+		}
+		confirmCode := util.RandomString(sessionIDLength)
+		ssoFallbackConfirmationsMu.Lock()
+		ssoFallbackConfirmations[confirmCode] = ssoFallbackConfirmationData{
+			Time:      time.Now().Add(ssoFallbackConfirmationTTL),
+			sessionID: fallbackSession,
+		}
+		ssoFallbackConfirmationsMu.Unlock()
+		finalRedirectQuery.Set(ssoLoginTokenParameter, confirmCode)
+	} else {
+		token, err := createLoginToken(ctx, userAPI, userutil.MakeUserID(localpart, serverName))
+		if err != nil {
+			util.GetLogger(ctx).WithError(err).Errorf("PerformLoginTokenCreation failed")
+			return jsonerror.InternalServerError()
+		}
+		util.GetLogger(ctx).WithField("localpart", localpart).WithField("ssoIdentifier", result.Identifier).Info("SSO created token")
 
-	rquery := finalRedirectURL.Query()
-	rquery.Set("loginToken", token.Token)
-	resp := util.RedirectResponse(finalRedirectURL.ResolveReference(&url.URL{RawQuery: rquery.Encode()}).String())
+		finalRedirectQuery.Set(ssoLoginTokenParameter, token.Token)
+	}
+
+	resp := util.RedirectResponse(finalRedirectURL.ResolveReference(&url.URL{RawQuery: finalRedirectQuery.Encode()}).String())
 	resp.Headers["Set-Cookie"] = (&http.Cookie{
-		Name:   "sso_nonce",
+		Name:   ssoNonceCookie,
 		Value:  "",
 		MaxAge: -1,
 		Secure: true,
 	}).String()
 	return resp
+}
+
+func ssoFallback(
+	req *http.Request,
+	w http.ResponseWriter,
+	cfg *config.SSO,
+) {
+
+	loginToken, sessionID := req.URL.Query().Get(ssoLoginTokenParameter), req.URL.Query().Get(ssoFallbackSessionParameter)
+	if sessionID == "" {
+		writeHTTPMessage(w, req,
+			"Session ID not provided",
+			http.StatusBadRequest,
+		)
+		return
+	}
+	if len(loginToken) == 0 {
+		idps := make(map[string]string)
+		urlValues := url.Values{
+			ssoProviderParameter:    nil,
+			ssoRedirectURLParameter: []string{req.URL.String()},
+		}
+		for _, idp := range cfg.Providers {
+			idpURL, err := buildURLFromOther(cfg, req, ssoFallBackPath, ssoRedirectPath)
+			if err != nil {
+				writeHTTPMessage(w, req,
+					err.Error(),
+					http.StatusInternalServerError,
+				)
+				return
+			}
+			urlValues.Set(ssoProviderParameter, idp.ID)
+			idps[idp.Name] = idpURL.ResolveReference(&url.URL{RawQuery: urlValues.Encode()}).String()
+		}
+		serveTemplate(w, ssoIdpListTemplate, idps)
+		return
+	}
+
+	ssoFallbackConfirmationsMu.RLock()
+	confirmedData, found := ssoFallbackConfirmations[loginToken]
+	ssoFallbackConfirmationsMu.RUnlock()
+	if found {
+		ssoFallbackConfirmationsMu.Lock()
+		delete(ssoFallbackConfirmations, loginToken)
+		ssoFallbackConfirmationsMu.Unlock()
+		if confirmedData.sessionID == sessionID && confirmedData.After(time.Now()) {
+			sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeSSO)
+			serveTemplate(w, successTemplate, map[string]string{})
+			return
+		}
+	}
+	writeHTTPMessage(w, req,
+		"Confirmation not provided or stale",
+		http.StatusBadRequest,
+	)
 }
 
 type ssoAuthenticator interface {
@@ -368,8 +498,6 @@ func registerSSOAccount(ctx context.Context, userAPI userAPIForSSO, ssoID *sso.U
 	return true, util.JSONResponse{}
 }
 
-// createLoginToken produces a new login token, valid for the given
-// user.
 func createLoginToken(ctx context.Context, userAPI userAPIForSSO, userID string) (*uapi.LoginTokenMetadata, error) {
 	req := uapi.PerformLoginTokenCreationRequest{Data: uapi.LoginTokenData{UserID: userID}}
 	var resp uapi.PerformLoginTokenCreationResponse

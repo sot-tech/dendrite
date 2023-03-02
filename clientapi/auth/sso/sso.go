@@ -30,6 +30,16 @@ import (
 // honoured.
 const maxHTTPTimeout = 10 * time.Second
 
+type providerBuilder func(*config.IdentityProvider, *http.Client) (identityProvider, error)
+
+var (
+	authTypes = map[config.IdentityProviderType]providerBuilder{
+		config.SSOTypeOAuth2: newOAuth2IdentityProvider,
+		config.SSOTypeGitHub: newGitHubIdentityProvider,
+		config.SSOTypeOIDC:   newOIDCIdentityProvider,
+	}
+)
+
 // An Authenticator keeps a set of identity providers and dispatches
 // calls to one of them, based on configured ID.
 type Authenticator struct {
@@ -50,17 +60,12 @@ func NewAuthenticator(cfg *config.SSO) (a *Authenticator, err error) {
 	}
 	for _, pcfg := range cfg.Providers {
 		pcfg = pcfg.WithDefaults()
-
-		switch pcfg.Type {
-		case config.SSOTypeOAuth2:
-			a.providers[pcfg.ID] = newOAuth2IdentityProvider(&pcfg, hc)
-		case config.SSOTypeOIDC:
-			a.providers[pcfg.ID], err = newOIDCIdentityProvider(&pcfg, hc)
-		case config.SSOTypeGitHub:
-			a.providers[pcfg.ID] = newGitHubIdentityProvider(&pcfg, hc)
-		default:
+		if builder, found := authTypes[pcfg.Type]; !found {
 			err = fmt.Errorf("unknown SSO provider type: %s", pcfg.Type)
+		} else {
+			a.providers[pcfg.ID], err = builder(&pcfg, hc)
 		}
+
 		if err != nil {
 			a = nil
 			break

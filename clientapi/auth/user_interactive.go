@@ -17,6 +17,8 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/matrix-org/dendrite/clientapi/auth/authtypes"
 	"net/http"
 	"sync"
 
@@ -32,7 +34,7 @@ import (
 // https://matrix.org/docs/spec/client_server/r0.6.1#authentication-types
 type Type interface {
 	// Name returns the name of the auth type e.g `m.login.password`
-	Name() string
+	Name() authtypes.LoginType
 	// Login with the auth type, returning an error response on failure.
 	// Not all types support login, only m.login.password and m.login.token
 	// See https://matrix.org/docs/spec/client_server/r0.6.1#post-matrix-client-r0-login
@@ -94,21 +96,29 @@ func (r *Login) ThirdPartyID() (medium, address string) {
 	return "", ""
 }
 
-type userInteractiveFlow struct {
-	Stages []string `json:"stages"`
-}
-
 // UserInteractive checks that the user is who they claim to be, via a UI auth.
 // This is used for things like device deletion and password reset where
 // the user already has a valid access token, but we want to double-check
 // that it isn't stolen by re-authenticating them.
 type UserInteractive struct {
 	sync.RWMutex
-	Flows []userInteractiveFlow
+	Flows []authtypes.Flow
 	// Map of login type to implementation
-	Types map[string]Type
+	Types map[authtypes.LoginType]Type
 	// Map of session ID to completed login types, will need to be extended in future
 	Sessions map[string][]string
+}
+
+type dummyType struct {
+}
+
+func (dummyType) Name() authtypes.LoginType {
+	return authtypes.LoginTypeSSO
+}
+
+func (dummyType) LoginFromJSON(_ context.Context, in []byte) (login *Login, cleanup LoginCleanupFunc, errRes *util.JSONResponse) {
+	fmt.Println(string(in))
+	return nil, nil, nil
 }
 
 func NewUserInteractive(userAccountAPI api.UserLoginAPI, cfg *config.ClientAPI) *UserInteractive {
@@ -116,20 +126,68 @@ func NewUserInteractive(userAccountAPI api.UserLoginAPI, cfg *config.ClientAPI) 
 		GetAccountByPassword: userAccountAPI.QueryAccountByPassword,
 		Config:               cfg,
 	}
+	flows := make([]authtypes.Flow, 0, 2)
+	types := make(map[authtypes.LoginType]Type)
+	if cfg.Login.SSO.Enabled {
+		typeSSO := &dummyType{}
+		flows = append(flows, authtypes.Flow{
+			Stages: []authtypes.LoginType{typeSSO.Name()},
+		})
+		types[authtypes.LoginTypeSSO] = typeSSO
+	}
+	flows = append(flows, authtypes.Flow{
+		Stages: []authtypes.LoginType{typePassword.Name()},
+	})
+	types[typePassword.Name()] = typePassword
+
 	return &UserInteractive{
-		Flows: []userInteractiveFlow{
-			{
-				Stages: []string{typePassword.Name()},
-			},
-		},
-		Types: map[string]Type{
-			typePassword.Name(): typePassword,
-		},
+		Flows:    flows,
+		Types:    types,
 		Sessions: make(map[string][]string),
 	}
 }
 
-func (u *UserInteractive) IsSingleStageFlow(authType string) bool {
+func (u *UserInteractive) HasCompletedFlows(authFlows []authtypes.Flow, completedTypes []authtypes.LoginType) bool {
+	u.RLock()
+	defer u.RUnlock()
+	for _, f := range authFlows {
+		incompleteStages := make([]authtypes.LoginType, 0, len(f.Stages))
+		for _, s := range f.Stages {
+			var found bool
+			for _, cs := range completedTypes {
+				if s == cs {
+					found = true
+					break
+				}
+			}
+			if !found {
+				incompleteStages = append(incompleteStages, s)
+			}
+		}
+		if len(incompleteStages) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *UserInteractive) PasswordLessFlows() []authtypes.Flow {
+	filteredFlows := make([]authtypes.Flow, 0, len(u.Flows))
+	for _, f := range u.Flows {
+		nonPasswordStages := make([]authtypes.LoginType, 0, len(f.Stages))
+		for _, s := range f.Stages {
+			if s != authtypes.LoginTypePassword {
+				nonPasswordStages = append(nonPasswordStages, s)
+			}
+		}
+		if len(nonPasswordStages) > 0 {
+			filteredFlows = append(filteredFlows, f)
+		}
+	}
+	return filteredFlows
+}
+
+func (u *UserInteractive) IsSingleStageFlow(authType authtypes.LoginType) bool {
 	u.RLock()
 	defer u.RUnlock()
 	for _, f := range u.Flows {
@@ -148,9 +206,9 @@ func (u *UserInteractive) AddCompletedStage(sessionID, authType string) {
 }
 
 type Challenge struct {
-	Completed []string              `json:"completed"`
-	Flows     []userInteractiveFlow `json:"flows"`
-	Session   string                `json:"session"`
+	Completed []string         `json:"completed"`
+	Flows     []authtypes.Flow `json:"flows"`
+	Session   string           `json:"session"`
 	// TODO: Return any additional `params`
 	Params map[string]interface{} `json:"params"`
 }
@@ -163,7 +221,7 @@ func (u *UserInteractive) challenge(sessionID string) *util.JSONResponse {
 	u.RUnlock()
 
 	return &util.JSONResponse{
-		Code: 401,
+		Code: http.StatusUnauthorized,
 		JSON: Challenge{
 			Completed: completed,
 			Flows:     flows,
@@ -228,7 +286,7 @@ func (u *UserInteractive) Verify(ctx context.Context, bodyBytes []byte, device *
 	authType := gjson.GetBytes(bodyBytes, "auth.type").Str
 
 	u.RLock()
-	loginType, ok := u.Types[authType]
+	loginType, ok := u.Types[authtypes.LoginType(authType)]
 	u.RUnlock()
 
 	if !ok {
@@ -247,7 +305,7 @@ func (u *UserInteractive) Verify(ctx context.Context, bodyBytes []byte, device *
 
 	if !ok {
 		// if the login type is part of a single stage flow then allow them to omit the session ID
-		if !u.IsSingleStageFlow(authType) {
+		if !u.IsSingleStageFlow(authtypes.LoginType(authType)) {
 			return nil, &util.JSONResponse{
 				Code: http.StatusBadRequest,
 				JSON: jsonerror.Unknown("The auth.session is missing or unknown."),

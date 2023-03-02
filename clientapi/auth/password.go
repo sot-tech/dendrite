@@ -41,7 +41,7 @@ type LoginTypePassword struct {
 	Config               *config.ClientAPI
 }
 
-func (t *LoginTypePassword) Name() string {
+func (t *LoginTypePassword) Name() authtypes.LoginType {
 	return authtypes.LoginTypePassword
 }
 

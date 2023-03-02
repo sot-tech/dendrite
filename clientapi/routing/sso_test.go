@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"github.com/matrix-org/dendrite/clientapi/auth/sso"
 	"net/http"
 	"net/url"
 	"regexp"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/matrix-org/dendrite/clientapi/auth/sso"
 	"github.com/matrix-org/dendrite/setup/config"
 	uapi "github.com/matrix-org/dendrite/userapi/api"
 )

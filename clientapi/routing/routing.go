@@ -665,19 +665,19 @@ func Setup(
 		}),
 	).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 
-	v3mux.Handle("/login/sso/callback",
+	v3mux.Handle(ssoCallbackPath,
 		httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
 			return SSOCallback(req, userAPI, ssoAuthenticator, &cfg.Login.SSO, cfg.Matrix.ServerName)
 		}),
 	).Methods(http.MethodGet, http.MethodOptions)
 
-	v3mux.Handle("/login/sso/redirect",
+	v3mux.Handle(ssoRedirectPath,
 		httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
 			return SSORedirect(req, "", ssoAuthenticator, &cfg.Login.SSO)
 		}),
 	).Methods(http.MethodGet, http.MethodOptions)
 
-	v3mux.Handle("/login/sso/redirect/{idpID}",
+	v3mux.Handle(ssoRedirectPath+"/{idpID}",
 		httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
 			vars := mux.Vars(req)
 			return SSORedirect(req, vars["idpID"], ssoAuthenticator, &cfg.Login.SSO)

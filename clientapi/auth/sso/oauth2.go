@@ -48,7 +48,7 @@ type oauth2IdentityProvider struct {
 	responseMimeType       string
 }
 
-func newOAuth2IdentityProvider(cfg *config.IdentityProvider, hc *http.Client) *oauth2IdentityProvider {
+func newOAuth2IdentityProvider(cfg *config.IdentityProvider, hc *http.Client) (identityProvider, error) {
 	return &oauth2IdentityProvider{
 		providerID:   cfg.ID,
 		clientID:     cfg.ClientID,
@@ -60,7 +60,7 @@ func newOAuth2IdentityProvider(cfg *config.IdentityProvider, hc *http.Client) *o
 		claims:           &cfg.Claims,
 
 		hc: hc,
-	}
+	}, nil
 }
 
 func (p *oauth2IdentityProvider) AuthorizationURL(_ context.Context, callbackURL, nonce string) (string, error) {

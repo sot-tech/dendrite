@@ -47,28 +47,38 @@ func UploadCrossSigningDeviceKeys(
 	if sessionID == "" {
 		sessionID = util.RandomString(sessionIDLength)
 	}
-	if uploadReq.Auth.Type != authtypes.LoginTypePassword {
+
+	authFlows := userInteractiveAuth.Flows
+
+	if uploadReq.Auth.Type == authtypes.LoginTypePassword {
+		typePassword := auth.LoginTypePassword{
+			GetAccountByPassword: accountAPI.QueryAccountByPassword,
+			Config:               cfg,
+		}
+		if _, authErr := typePassword.Login(req.Context(), &uploadReq.Auth.PasswordRequest); authErr != nil {
+			return *authErr
+		}
+		sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypePassword)
+	} /*else {
+		authFlows = userInteractiveAuth.PasswordLessFlows()
+	}*/
+
+	// FIXME: element and nheko does NOT support flow selection
+	if len(authFlows) == 0 || !userInteractiveAuth.HasCompletedFlows(authFlows, sessions.getCompletedStages(sessionID)) {
 		return util.JSONResponse{
 			Code: http.StatusUnauthorized,
 			JSON: newUserInteractiveResponse(
 				sessionID,
-				[]authtypes.Flow{
-					{
-						Stages: []authtypes.LoginType{authtypes.LoginTypePassword},
-					},
-				},
+				//[]authtypes.Flow{
+				//	{
+				//		Stages: []authtypes.LoginType{authtypes.LoginTypePassword},
+				//	},
+				//},
+				userInteractiveAuth.Flows,
 				nil,
 			),
 		}
 	}
-	typePassword := auth.LoginTypePassword{
-		GetAccountByPassword: accountAPI.QueryAccountByPassword,
-		Config:               cfg,
-	}
-	if _, authErr := typePassword.Login(req.Context(), &uploadReq.Auth.PasswordRequest); authErr != nil {
-		return *authErr
-	}
-	sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypePassword)
 
 	uploadReq.UserID = device.UserID
 	if err := keyserverAPI.PerformUploadDeviceKeys(req.Context(), &uploadReq.PerformUploadDeviceKeysRequest, uploadRes); err != nil {

@@ -441,8 +441,17 @@ func (d *Database) CreateOpenIDToken(
 func (d *Database) GetOpenIDTokenAttributes(
 	ctx context.Context,
 	token string,
-) (*api.OpenIDTokenAttributes, error) {
-	return d.OpenIDTokens.SelectOpenIDTokenAtrributes(ctx, token)
+) (attrs *api.OpenIDTokenAttributes, err error) {
+	if attrs, err = d.OpenIDTokens.SelectOpenIDTokenAttributes(ctx, token); err == nil {
+		nowMS := time.Now().UnixNano() / int64(time.Millisecond)
+		if nowMS > attrs.ExpiresAtMS {
+			_ = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+				return d.OpenIDTokens.DeleteOpenIDToken(ctx, txn, token)
+			})
+			attrs = &api.OpenIDTokenAttributes{}
+		}
+	}
+	return
 }
 
 func (d *Database) CreateKeyBackup(

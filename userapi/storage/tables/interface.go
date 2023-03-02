@@ -81,7 +81,8 @@ type LoginTokenTable interface {
 
 type OpenIDTable interface {
 	InsertOpenIDToken(ctx context.Context, txn *sql.Tx, token, localpart string, serverName gomatrixserverlib.ServerName, expiresAtMS int64) (err error)
-	SelectOpenIDTokenAtrributes(ctx context.Context, token string) (*api.OpenIDTokenAttributes, error)
+	SelectOpenIDTokenAttributes(ctx context.Context, token string) (*api.OpenIDTokenAttributes, error)
+	DeleteOpenIDToken(ctx context.Context, txn *sql.Tx, token string) (err error)
 }
 
 type ProfileTable interface {

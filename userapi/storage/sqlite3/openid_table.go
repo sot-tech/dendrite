@@ -25,16 +25,17 @@ CREATE TABLE IF NOT EXISTS userapi_openid_tokens (
 );
 `
 
-const insertOpenIDTokenSQL = "" +
-	"INSERT INTO userapi_openid_tokens(token, localpart, server_name, token_expires_at_ms) VALUES ($1, $2, $3, $4)"
+const insertOpenIDTokenSQL = "INSERT INTO userapi_openid_tokens(token, localpart, server_name, token_expires_at_ms) VALUES ($1, $2, $3, $4)"
 
-const selectOpenIDTokenSQL = "" +
-	"SELECT localpart, server_name, token_expires_at_ms FROM userapi_openid_tokens WHERE token = $1"
+const selectOpenIDTokenSQL = "SELECT localpart, server_name, token_expires_at_ms FROM userapi_openid_tokens WHERE token = $1"
+
+const deleteOpenIDTokenSQL = "DELETE FROM userapi_openid_tokens WHERE token = $1"
 
 type openIDTokenStatements struct {
 	db              *sql.DB
 	insertTokenStmt *sql.Stmt
 	selectTokenStmt *sql.Stmt
+	deleteTokenStmt *sql.Stmt
 	serverName      gomatrixserverlib.ServerName
 }
 
@@ -50,6 +51,7 @@ func NewSQLiteOpenIDTable(db *sql.DB, serverName gomatrixserverlib.ServerName) (
 	return s, sqlutil.StatementList{
 		{&s.insertTokenStmt, insertOpenIDTokenSQL},
 		{&s.selectTokenStmt, selectOpenIDTokenSQL},
+		{&s.deleteTokenStmt, deleteOpenIDTokenSQL},
 	}.Prepare(db)
 }
 
@@ -68,7 +70,7 @@ func (s *openIDTokenStatements) InsertOpenIDToken(
 
 // selectOpenIDTokenAtrributes gets the attributes associated with an OpenID token from the DB
 // Returns the existing token's attributes, or err if no token is found
-func (s *openIDTokenStatements) SelectOpenIDTokenAtrributes(
+func (s *openIDTokenStatements) SelectOpenIDTokenAttributes(
 	ctx context.Context,
 	token string,
 ) (*api.OpenIDTokenAttributes, error) {
@@ -88,4 +90,15 @@ func (s *openIDTokenStatements) SelectOpenIDTokenAtrributes(
 	}
 
 	return &openIDTokenAttrs, nil
+}
+
+// DeleteOpenIDToken deletes OpenID Connect token from the DB.
+// Returns error if SQL error occurred.
+func (s *openIDTokenStatements) DeleteOpenIDToken(
+	ctx context.Context,
+	txn *sql.Tx,
+	token string,
+) (err error) {
+	_, err = sqlutil.TxStmt(txn, s.deleteTokenStmt).ExecContext(ctx, token)
+	return
 }

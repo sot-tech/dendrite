@@ -102,8 +102,8 @@ func AuthFallback(
 	w http.ResponseWriter, req *http.Request, authType string,
 	cfg *config.ClientAPI,
 ) {
-	// We currently only support "m.login.recaptcha", so fail early if that's not requested
-	if authType == authtypes.LoginTypeRecaptcha {
+	switch authType {
+	case authtypes.LoginTypeRecaptcha:
 		if !cfg.RecaptchaEnabled {
 			writeHTTPMessage(w, req,
 				"Recaptcha login is disabled on this Homeserver",
@@ -111,7 +111,17 @@ func AuthFallback(
 			)
 			return
 		}
-	} else {
+	case authtypes.LoginTypeSSO:
+		if cfg.Login.SSO.Enabled {
+			ssoFallback(req, w, &cfg.Login.SSO)
+		} else {
+			writeHTTPMessage(w, req,
+				"SSO login is disabled on this Homeserver",
+				http.StatusBadRequest,
+			)
+		}
+		return
+	default:
 		writeHTTPMessage(w, req, fmt.Sprintf("Unknown authtype %q", authType), http.StatusNotImplemented)
 		return
 	}

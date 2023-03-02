@@ -33,7 +33,7 @@ type LoginTypeToken struct {
 }
 
 // Name implements Type.
-func (t *LoginTypeToken) Name() string {
+func (t *LoginTypeToken) Name() authtypes.LoginType {
 	return authtypes.LoginTypeToken
 }
 

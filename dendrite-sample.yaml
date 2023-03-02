@@ -194,6 +194,9 @@ client_api:
       # marked as valid redirect url in provider configuration if
       # it OIDC-compatible.
       callback_url: ""
+      # (Optional) Provider to use when the client doesn't indicate one.
+      # This is legacy option. If empty, the first provider listed is used.
+      default_provider: ""
       # List of the identity providers
       providers:
         - # Describes how this provider is implemented (oauth2, oidc, github)
@@ -208,9 +211,10 @@ client_api:
           # Full OIDC Discovery url like `https://some.provider/.well-known/openid-configuration`.
           # Used only if `oidc` type provided.
           discovery_url: ""
-          # List of scopes (rights/attributes) to fetch
+          # List of scopes (rights/attributes) to fetch. Required for provider type `oauth2`
           scopes: ["openid", "profile", "email"]
-          # Map of provider's attributes to user attributes
+          # Map of provider's attributes to user attributes.
+          # Required for provider type `oauth2`
           claims:
             # Unique identifier
             subject: "sub"
@@ -225,12 +229,12 @@ client_api:
           authorization_url: ""
           access_token_url: ""
           user_info_url: ""
-          # Expected provider response MIME type
+          # (Optional) Expected provider response MIME type
           response_mime_type: "application/json"
 
-          # Hint on how to display the provider to the user (apple, facebook, github...)
+          # (Optional) Hint on how to display the provider to the user (apple, facebook, github...)
           brand: ""
-          # MXC URI describing how to display the provider to the user
+          # (Optional) MXC URI describing how to display the provider to the user
           icon: ""
   # TURN server information that this homeserver should send to clients.
   turn:

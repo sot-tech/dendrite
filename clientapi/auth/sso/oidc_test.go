@@ -25,7 +25,7 @@ func TestOIDCIdentityProviderAuthorizationURL(t *testing.T) {
 	s := httptest.NewServer(mux)
 	defer s.Close()
 
-	idp, err := newOIDCIdentityProvider(&config.IdentityProvider{
+	idp, err := NewOIDCIdentityProvider(&config.IdentityProvider{
 		ClientID:     "aclientid",
 		DiscoveryURL: s.URL + "/discovery",
 		Scopes:       []string{"openid", "profile", "email"},
@@ -96,7 +96,7 @@ func TestOIDCIdentityProviderProcessCallback(t *testing.T) {
 			defer s.Close()
 
 			sURL = s.URL
-			idp, err := newOIDCIdentityProvider(&config.IdentityProvider{
+			idp, err := NewOIDCIdentityProvider(&config.IdentityProvider{
 				ClientID:     "aclientid",
 				DiscoveryURL: sURL + "/discovery",
 				Claims: config.OAuth2Claims{
