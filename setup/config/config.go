@@ -19,6 +19,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
