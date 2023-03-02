@@ -197,6 +197,9 @@ client_api:
       # (Optional) Provider to use when the client doesn't indicate one.
       # This is legacy option. If empty, the first provider listed is used.
       default_provider: ""
+      # If localpart already taken, allow link specified SSO account to matrix account.
+      # Warning: use with care.
+      link_accounts: true
       # List of the identity providers
       providers:
         - # Describes how this provider is implemented (oauth2, oidc, github)

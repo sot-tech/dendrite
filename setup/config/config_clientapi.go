@@ -137,6 +137,10 @@ type SSO struct {
 	// DefaultProviderID is the provider to use when the client doesn't indicate one.
 	// This is legacy support. If empty, the first provider listed is used.
 	DefaultProviderID string `yaml:"default_provider"`
+
+	// LinkAccounts allows linking SSO subject localpart with existing MX user
+	// XXX: USE WITH CARE
+	LinkAccounts bool `yaml:"link_accounts"`
 }
 
 func (sso *SSO) Verify(configErrs *ConfigErrors) {

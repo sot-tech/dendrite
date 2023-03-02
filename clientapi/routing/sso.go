@@ -241,7 +241,7 @@ func SSOCallback(
 			localpart = strconv.FormatInt(res.ID, 10)
 		}
 
-		ok, resp := registerSSOAccount(ctx, userAPI, result.Identifier, localpart)
+		ok, resp := registerSSOAccount(ctx, userAPI, result.Identifier, localpart, cfg.LinkAccounts)
 		if !ok {
 			util.GetLogger(ctx).WithError(err).WithField("ssoIdentifier", result.Identifier).WithField("localpart", localpart).Error("failed to register account")
 			return resp
@@ -330,12 +330,17 @@ func verifySSOUserIdentifier(ctx context.Context, userAPI userAPIForSSO, id *sso
 // registerSSOAccount creates an account and associates the SSO
 // identifier with it. Note that SSO login account creation doesn't
 // use the standard registration API, but happens ad-hoc.
-func registerSSOAccount(ctx context.Context, userAPI userAPIForSSO, ssoID *sso.UserIdentifier, localpart string) (bool, util.JSONResponse) {
+func registerSSOAccount(ctx context.Context, userAPI userAPIForSSO,
+	ssoID *sso.UserIdentifier, localpart string, link bool) (bool, util.JSONResponse) {
 	var accRes uapi.PerformAccountCreationResponse
+	conflictAction := uapi.ConflictAbort
+	if link {
+		conflictAction = uapi.ConflictUpdate
+	}
 	err := userAPI.PerformAccountCreation(ctx, &uapi.PerformAccountCreationRequest{
 		Localpart:   localpart,
 		AccountType: uapi.AccountTypeUser,
-		OnConflict:  uapi.ConflictAbort,
+		OnConflict:  conflictAction,
 	}, &accRes)
 	if err != nil {
 		if _, ok := err.(*uapi.ErrorConflict); ok {
