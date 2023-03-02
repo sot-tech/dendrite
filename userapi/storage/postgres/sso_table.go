@@ -24,7 +24,7 @@ import (
 
 const ssoSchema = `
 -- Stores data about SSO associations.
-CREATE TABLE IF NOT EXISTS account_sso (
+CREATE TABLE IF NOT EXISTS userapi_account_sso (
 	-- The "iss" namespace. Must be "oidc".
 	namespace TEXT NOT NULL,
     -- The issuer; for "oidc", a URL.
@@ -38,14 +38,11 @@ CREATE TABLE IF NOT EXISTS account_sso (
 );
 `
 
-const selectLocalpartForSSOSQL = "" +
-	"SELECT localpart FROM account_sso WHERE namespace = $1 AND iss = $2 AND sub = $3"
+const selectLocalpartForSSOSQL = "SELECT localpart FROM userapi_account_sso WHERE namespace = $1 AND iss = $2 AND sub = $3"
 
-const insertSSOSQL = "" +
-	"INSERT INTO account_sso (namespace, iss, sub, localpart) VALUES ($1, $2, $3, $4)"
+const insertSSOSQL = "INSERT INTO userapi_account_sso (namespace, iss, sub, localpart) VALUES ($1, $2, $3, $4)"
 
-const deleteSSOSQL = "" +
-	"DELETE FROM account_sso WHERE namespace = $1 AND iss = $2 AND sub = $3"
+const deleteSSOSQL = "DELETE FROM userapi_account_sso WHERE namespace = $1 AND iss = $2 AND sub = $3"
 
 type ssoStatements struct {
 	selectLocalpartForSSOStmt *sql.Stmt
